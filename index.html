@@ -133,11 +133,12 @@
   .card.picked .tick { background: var(--brand); border-color: var(--brand); }
   .selbar { position: fixed; left: 12px; right: 12px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 9; max-width: 616px; margin: 0 auto;
     display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 10px 10px 16px; box-shadow: 0 6px 24px rgba(0,0,0,.15); }
-  .thumb { width: 56px; height: 56px; border-radius: 12px; overflow: hidden; background: var(--brand-soft); display: flex; align-items: center; justify-content: center; font-size: 28px; flex: none; }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .thumb.sm { width: 40px; height: 40px; font-size: 20px; border-radius: 10px; }
-  .thumb.lg { width: 92px; height: 92px; font-size: 42px; border-radius: 16px; }
-  .cover { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius); display: block; margin: 6px 0 4px; }
+  /* Fotos im Querformat (3:2), das ganze Bild bleibt sichtbar */
+  .thumb { width: 90px; height: 60px; border-radius: 10px; overflow: hidden; background: var(--brand-soft); display: flex; align-items: center; justify-content: center; font-size: 28px; flex: none; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb.sm { width: 54px; height: 36px; font-size: 18px; border-radius: 8px; }
+  .thumb.lg { width: 150px; height: 100px; font-size: 42px; border-radius: 14px; }
+  .cover { width: 100%; height: auto; max-height: 60vh; object-fit: contain; background: var(--brand-soft); border-radius: var(--radius); display: block; margin: 6px 0 4px; }
   details.cat { border-top: 1px solid var(--line); }
   details.cat:first-child { border-top: 0; }
   details.cat > summary { list-style: none; cursor: pointer; padding: 12px 0; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; }
@@ -448,6 +449,7 @@ document.addEventListener("click", (e) => {
     "km": () => kmForm(d.bike),
     "task": () => taskDetail(d.bike, d.task),
     "new-task": () => taskForm(d.bike),
+    "std-pick": () => stdPicker(d.bike),
     "edit-task": () => taskForm(d.bike, d.task),
     "del-log": () => delLog(d.log),
     "day": () => { calSel = d.date; renderCal(); },
@@ -604,8 +606,8 @@ function renderCal() {
 function bikeThumb(b, size = "") {
   return `<div class="thumb ${size}">${b.photo ? `<img src="${b.photo}" alt="">` : "🚲"}</div>`;
 }
-/* Foto verkleinern (max. 800 px, JPEG), damit der Speicher reicht */
-function shrinkImage(file, max = 800, quality = 0.72) {
+/* Foto verkleinern (max. 1000 px, Seitenverhältnis bleibt), damit der Speicher reicht */
+function shrinkImage(file, max = 1000, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -677,7 +679,10 @@ function bikeDetail(id) {
       <button class="btn ghost" data-act="free-work" data-bike="${b.id}">+ Reparatur</button>
     </div>
     <h2>Wartungsplan</h2><div class="card">${tasks}</div>
-    <button class="btn ghost block" data-act="new-task" data-bike="${b.id}" style="margin-top:0">+ Eigene Wartungsaufgabe hinzufügen</button>
+    <div class="two">
+      <button class="btn ghost" data-act="std-pick" data-bike="${b.id}">+ Standard-Aufgabe</button>
+      <button class="btn ghost" data-act="new-task" data-bike="${b.id}">+ Eigene Aufgabe</button>
+    </div>
     ${partsOverview(b)}
     <h2>Verlauf${total ? " · " + total.toLocaleString("de-DE", { style: "currency", currency: "EUR" }) + " gesamt" : ""}</h2><div class="card">${hist}</div>
     <button class="btn ghost block" data-act="edit-bike" data-bike="${b.id}">Rad bearbeiten</button>`);
@@ -819,6 +824,47 @@ function tplFromTask(bikeId, taskId) {
   if (ex && !confirm(`„${t.name}" gibt es schon in den Standard-Aufgaben für ${type}. Mit diesen Werten überschreiben?`)) return;
   if (ex) Object.assign(ex, data); else store[type].push({ id: uid(), ...data });
   save(); toast("Als Standard für " + type + " gespeichert");
+}
+
+/* Standard-Aufgaben zu einem bestehenden Rad hinzufügen */
+function stdPicker(bikeId, showAll = false, pre = []) {
+  const b = bikeById(bikeId); if (!b) return;
+  const have = new Set(b.tasks.map((t) => t.name.toLowerCase()));
+  const own = templatesFor(b.type || "Anderes");
+  // Aufgaben aus anderen Radtypen, ohne doppelte Titel
+  const seen = new Set(own.map((t) => t.name.toLowerCase()));
+  const others = [];
+  bikeTypes().filter((ty) => ty !== b.type).forEach((ty) => templatesFor(ty).forEach((t) => {
+    const k = t.name.toLowerCase(); if (!seen.has(k)) { seen.add(k); others.push({ ...t, from: ty }); }
+  }));
+  const pool = showAll ? [...own, ...others] : own;
+  const row = (t, i) => {
+    const exists = have.has(t.name.toLowerCase());
+    return `<label class="chk" style="${exists ? "opacity:.5" : ""}"><input type="checkbox" name="std" value="${i}" ${exists ? "disabled" : pre.includes(i) ? "checked" : ""}>
+      <span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}${t.from ? " · aus " + esc(t.from) : ""}${exists ? " · schon vorhanden" : ""}</span></span></label>`;
+  };
+  const free = pool.filter((t) => !have.has(t.name.toLowerCase())).length;
+  openSheet(sheetHead("Standard-Aufgaben hinzufügen") + `
+    <div class="sub">${esc(b.name)} · Vorlagen für ${esc(b.type || "Anderes")}</div>
+    <form id="f-std">
+      <div class="card" style="padding:4px 14px;margin-top:12px">${byCat(pool.map((t, i) => ({ t, i })), (x) => x.t).map(([c, list]) =>
+        `<div class="cat-h">${CAT_ICON[c]} ${c}</div>` + list.map(({ t, i }) => row(t, i)).join("")).join("") || `<p class="sub" style="padding:10px 0">Keine Standard-Aufgaben vorhanden.</p>`}</div>
+      ${!showAll && others.length ? `<button class="btn ghost block" type="button" id="std-all">Auch Aufgaben anderer Radtypen zeigen (${others.length})</button>` : ""}
+      ${free ? "" : `<p class="hint">Alle Standard-Aufgaben sind bei diesem Rad schon vorhanden.</p>`}
+      <button class="btn block" type="submit">Ausgewählte hinzufügen</button>
+      <button class="btn ghost block" type="button" data-act="open-bike" data-bike="${b.id}">Zurück</button>
+    </form>`);
+  const f = document.getElementById("f-std");
+  const allBtn = document.getElementById("std-all");
+  if (allBtn) allBtn.addEventListener("click", () => stdPicker(bikeId, true, new FormData(f).getAll("std").map(Number)));
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const picked = new FormData(f).getAll("std").map((i) => pool[i]);
+    if (!picked.length) { toast("Nichts ausgewählt"); return; }
+    picked.forEach((t) => b.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note || "", part: t.part || "", cat: catOf(t), lastDate: null, lastKm: null }));
+    save(); render(); bikeDetail(b.id);
+    toast(picked.length + (picked.length === 1 ? " Aufgabe" : " Aufgaben") + " hinzugefügt");
+  });
 }
 
 /* ---------- Formulare ---------- */

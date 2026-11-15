@@ -1,5 +1,5 @@
 // Service Worker: sorgt dafür, dass die App auch ohne Internet startet.
-const CACHE = "rad-wartung-v9";
+const CACHE = "rad-wartung-v10";
 // Version hochzählen, wenn sich etwas ändert
 const FILES = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 

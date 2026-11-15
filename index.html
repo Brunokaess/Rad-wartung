@@ -138,6 +138,16 @@
   .thumb.sm { width: 40px; height: 40px; font-size: 20px; border-radius: 10px; }
   .thumb.lg { width: 92px; height: 92px; font-size: 42px; border-radius: 16px; }
   .cover { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius); display: block; margin: 6px 0 4px; }
+  details.cat { border-top: 1px solid var(--line); }
+  details.cat:first-child { border-top: 0; }
+  details.cat > summary { list-style: none; cursor: pointer; padding: 12px 0; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; }
+  details.cat > summary::-webkit-details-marker { display: none; }
+  details.cat > summary::after { content: "›"; margin-left: auto; color: var(--muted); font-size: 22px; transform: rotate(90deg); transition: transform .15s; }
+  details.cat:not([open]) > summary::after { transform: rotate(0deg); }
+  details.cat > .items { padding-bottom: 6px; }
+  details.cat .list-item:first-child { border-top: 1px solid var(--line); }
+  .cat-h { font-size: 13px; font-weight: 700; color: var(--muted); padding: 12px 0 2px; border-top: 1px solid var(--line); }
+  .cat-h:first-child { border-top: 0; }
   ol.steps { padding-left: 20px; margin: 6px 0; font-size: 15px; } ol.steps li { margin: 4px 0; }
 </style>
 </head>
@@ -222,6 +232,41 @@ const PART_OF = {
   reifen: "Reifen", reifenRR: "Reifen", tubeless: "Dichtmilch",
   lenkerband: "Lenkerband", zuege: "Züge"
 };
+/* Kategorien für Wartungsaufgaben */
+const CATEGORIES = ["Antrieb", "Bremsen", "Laufräder", "Rahmen", "Sonstiges"];
+const CAT_ICON = { Antrieb: "⛓️", Bremsen: "🛑", "Laufräder": "🛞", Rahmen: "🚲", Sonstiges: "🔧" };
+const CAT_OF = {
+  kette: "Antrieb", ketteRR: "Antrieb", ketteMTB: "Antrieb", ketteMess: "Antrieb", schaltung: "Antrieb", zuege: "Antrieb", nabe: "Antrieb",
+  bremsen: "Bremsen", scheiben: "Bremsen", entlueften: "Bremsen",
+  druck14: "Laufräder", druck7: "Laufräder", reifen: "Laufräder", reifenRR: "Laufräder", laufrad: "Laufräder", tubeless: "Laufräder",
+  schrauben: "Rahmen", lager: "Rahmen", gabel: "Rahmen", gabelSvc: "Rahmen", daempfer: "Rahmen", traeger: "Rahmen", lenkerband: "Rahmen",
+  licht: "Sonstiges", akku: "Sonstiges", ebikeInsp: "Sonstiges", inspektion: "Sonstiges"
+};
+/* Für Aufgaben ohne Kategorie (ältere Daten): anhand des Titels raten */
+function guessCat(t) {
+  const n = ((t.name || "") + " " + (t.part || "")).toLowerCase();
+  if (/brems/.test(n)) return "Bremsen";
+  if (/kette|schalt|ritzel|kassette|kurbel|nabe|pedal|innenlager|zahnriemen|antrieb|umwerfer/.test(n)) return "Antrieb";
+  if (/reifen|schlauch|laufr|speiche|felge|tubeless|dichtmilch|druck|ventil|mantel/.test(n)) return "Laufräder";
+  if (/rahmen|gabel|dämpfer|daempfer|lager|steuersatz|lenker|sattel|schraub|vorbau|gepäck|schutzblech|ständer/.test(n)) return "Rahmen";
+  return "Sonstiges";
+}
+const catOf = (t) => (CATEGORIES.includes(t.cat) ? t.cat : guessCat(t));
+const catSelect = (attr, value) => `<select ${attr}>${CATEGORIES.map((c) => `<option value="${c}" ${value === c ? "selected" : ""}>${CAT_ICON[c]} ${c}</option>`).join("")}</select>`;
+/* Sortierung nach Intervall: kürzestes zuerst. Reine km-Intervalle werden mit
+   ca. 3.000 km pro Jahr in Tage umgerechnet, Aufgaben ohne Intervall kommen ans Ende. */
+function intervalDays(t) {
+  const fromKm = t.km ? (t.km / 3000) * 365 : Infinity;
+  return Math.min(t.days || Infinity, fromKm);
+}
+const byInterval = (getTask = (x) => x) => (a, b) => {
+  const ta = getTask(a), tb = getTask(b);
+  return intervalDays(ta) - intervalDays(tb) || (ta.km || 9e9) - (tb.km || 9e9) || ta.name.localeCompare(tb.name, "de");
+};
+/* Elemente in Kategorien gruppieren (feste Reihenfolge, leere weglassen), innerhalb nach Intervall sortiert */
+function byCat(items, getTask = (x) => x) {
+  return CATEGORIES.map((c) => [c, items.filter((x) => catOf(getTask(x)) === c).sort(byInterval(getTask))]).filter(([, l]) => l.length);
+}
 const BIKE_TYPES = Object.keys(TEMPLATE_SETS);
 /* Aktive Radtypen und Standard-Aufgaben: eigene, falls angepasst, sonst die Vorschläge */
 function bikeTypes() { return state.templates ? Object.keys(state.templates) : BIKE_TYPES; }
@@ -230,7 +275,7 @@ function templatesFor(type) {
   return defaultTemplatesFor(type);
 }
 function defaultTemplatesFor(type) {
-  return (TEMPLATE_SETS[type] || TEMPLATE_SETS["Anderes"]).map((k) => { const [name, days, km, note] = T[k]; return { name, days, km, note, part: PART_OF[k] || "" }; });
+  return (TEMPLATE_SETS[type] || TEMPLATE_SETS["Anderes"]).map((k) => { const [name, days, km, note] = T[k]; return { name, days, km, note, part: PART_OF[k] || "", cat: CAT_OF[k] || "Sonstiges" }; });
 }
 
 /* ---------- Verschleißteile: Alter & Lebensdauer ---------- */
@@ -294,7 +339,7 @@ let state = load();
 let tab = "due";
 let calMonth = startOfMonth(new Date());
 let calSel = todayISO();
-let filterBike = "all", selMode = false, showLater = false;
+let filterBike = "all", filterCat = "all", selMode = false, showLater = false;
 const selected = new Set();
 
 function blank() { return { version: 1, bikes: [], log: [], meta: { lastChange: null, lastBackup: null } }; }
@@ -416,6 +461,7 @@ document.addEventListener("click", (e) => {
     "go-more": () => { tab = "more"; render(); },
     "go-bikes": () => { tab = "bikes"; render(); },
     "filter": () => { filterBike = d.bike; selected.clear(); renderDue(); },
+    "cat": () => { filterCat = d.cat; selected.clear(); renderDue(); },
     "later": () => { showLater = !showLater; renderDue(); },
     "sel-mode": () => { selMode = !selMode; selected.clear(); renderDue(); },
     "sel": () => { selected.has(d.key) ? selected.delete(d.key) : selected.add(d.key); renderDue(); },
@@ -426,7 +472,11 @@ document.addEventListener("click", (e) => {
     "tpl-add": () => tplTaskForm(null),
     "tpl-edit": () => tplTaskForm(Number(d.i)),
     "tpl-back": () => tplManager(tplType),
-    "tpl-move": () => { const l = tplStore()[tplType], i = Number(d.i), j = i + Number(d.dir); if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; save(); tplManager(tplType); },
+    "tpl-move": () => {   // innerhalb der Kategorie verschieben
+      const l = tplStore()[tplType], i = Number(d.i), dir = Number(d.dir), c = catOf(l[i]);
+      let j = i + dir; while (j >= 0 && j < l.length && catOf(l[j]) !== c) j += dir;
+      if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; save(); tplManager(tplType);
+    },
     "tpl-reset": () => { if (!confirm(`Standard-Aufgaben für ${tplType} auf die ursprünglichen Vorschläge zurücksetzen?`)) return; tplStore()[tplType] = defaultTemplatesFor(tplType).map((t) => ({ id: uid(), ...t })); save(); tplManager(tplType); toast("Zurückgesetzt"); },
     "tpl-del-type": () => { if (!confirm(`Radtyp „${tplType}" mit seinen Standard-Aufgaben löschen? Räder dieser Art bleiben erhalten.`)) return; delete tplStore()[tplType]; tplType = null; save(); tplManager(); },
     "tpl-from-task": () => tplFromTask(d.bike, d.task)
@@ -463,11 +513,14 @@ function taskCard(x) {
 }
 function renderDue() {
   if (filterBike !== "all" && !bikeById(filterBike)) filterBike = "all";
-  const items = allTasks().filter((x) => filterBike === "all" || x.bike.id === filterBike);
-  const sortD = (a, b) => (a.st.daysLeft ?? -9999) - (b.st.daysLeft ?? -9999) || (a.st.kmLeft ?? 9e9) - (b.st.kmLeft ?? 9e9);
+  const bikeItems = allTasks().filter((x) => filterBike === "all" || x.bike.id === filterBike);
+  if (filterCat !== "all" && !bikeItems.some((x) => catOf(x.task) === filterCat)) filterCat = "all";
+  const openIn = (c) => bikeItems.filter((x) => x.st.level !== "ok" && catOf(x.task) === c).length;
+  const items = bikeItems.filter((x) => filterCat === "all" || catOf(x.task) === filterCat);
+  const sortD = byInterval((x) => x.task);
   const over = items.filter((x) => x.st.level === "over").sort(sortD);
   const soon = items.filter((x) => x.st.level === "soon").sort(sortD);
-  const neu = items.filter((x) => x.st.level === "new");
+  const neu = items.filter((x) => x.st.level === "new").sort(sortD);
   const ok = items.filter((x) => x.st.level === "ok").sort(sortD);
   const open = over.length + soon.length + neu.length;
   setHeader("Offen", !state.bikes.length ? "" : open ? open + (open === 1 ? " offene Aufgabe" : " offene Aufgaben") + (over.length ? ", davon " + over.length + " überfällig" : "") : "Alles erledigt 👍");
@@ -482,6 +535,10 @@ function renderDue() {
     `<button class="chip ${filterBike === id ? "on" : ""}" data-act="filter" data-bike="${id}">${esc(n)}</button>`).join("")}</div>`;
   const shown = filterBike === "all" ? state.bikes : [bikeById(filterBike)];
   h += `<div class="chips">${shown.map((b) => `<button class="chip" data-act="km" data-bike="${b.id}">🚲 ${state.bikes.length > 1 ? esc(b.name) + ": " : "Tacho: "}${b.km != null ? km(b.km) : "km eintragen"} ✎</button>`).join("")}</div>`;
+  if (bikeItems.length) h += `<div class="chips"><button class="chip ${filterCat === "all" ? "on" : ""}" data-act="cat" data-cat="all">Alle Kategorien</button>${CATEGORIES.filter((c) => bikeItems.some((x) => catOf(x.task) === c)).map((c) => {
+    const n = openIn(c);
+    return `<button class="chip ${filterCat === c ? "on" : ""}" data-act="cat" data-cat="${c}">${CAT_ICON[c]} ${c}${n ? ` <span style="opacity:.7">${n}</span>` : ""}</button>`;
+  }).join("")}</div>`;
   if (open) h += `<div class="row" style="margin:12px 4px -8px"><div class="grow sub">${selMode ? "Tippe auf die Aufgaben, die du erledigt hast." : ""}</div>
     <button class="link" data-act="sel-mode">${selMode ? "Abbrechen" : "☑︎ Mehrere abhaken"}</button></div>`;
   if (over.length) h += `<h2>Überfällig</h2>` + over.map(taskCard).join("");
@@ -590,13 +647,20 @@ function renderBikes() {
 
 function bikeDetail(id) {
   const b = bikeById(id); if (!b) return;
-  const tasks = b.tasks.map((t) => {
+  const taskRow = (t) => {
     const st = status(b, t);
     return `<div class="list-item row"><div class="bar ${st.level}"></div>
       <div class="grow" data-act="task" data-bike="${b.id}" data-task="${t.id}" style="cursor:pointer">
         <div class="title" style="font-size:16px">${esc(t.name)}${t.note ? ` <span style="font-size:13px">📝</span>` : ""}</div>
         <div class="sub">${esc(intervalText(t))} · ${esc(st.text)}</div></div>
       <button class="btn small ghost" data-act="done" data-bike="${b.id}" data-task="${t.id}">Erledigt</button></div>`;
+  };
+  const tasks = byCat(b.tasks).map(([c, list]) => {
+    const lv = list.map((t) => status(b, t).level);
+    const o = lv.filter((l) => l === "over").length, so = lv.filter((l) => l === "soon").length;
+    return `<details class="cat" ${o || so ? "open" : ""}><summary>${CAT_ICON[c]} ${c} <span class="sub" style="font-weight:400">${list.length}</span>
+        ${o ? `<span class="pill over">${o} überfällig</span>` : so ? `<span class="pill soon">${so} bald</span>` : ""}</summary>
+      <div class="items">${list.map(taskRow).join("")}</div></details>`;
   }).join("") || `<p class="sub">Noch keine Wartungsarbeiten.</p>`;
   const logs = state.log.filter((l) => l.bikeId === b.id).sort((a, c) => c.date.localeCompare(a.date) || (c.created || "").localeCompare(a.created || ""));
   const total = logs.reduce((s, l) => s + (Number(l.cost) || 0), 0);
@@ -653,19 +717,17 @@ function tplManager(type) {
     <div class="chips">${types.map((t) => `<button class="chip ${t === tplType ? "on" : ""}" data-act="tpl-type" data-type="${esc(t)}">${esc(t)}</button>`).join("")}
       <button class="chip" data-act="tpl-new-type">+ Radtyp</button></div>
     <h2>${esc(tplType)} · ${list.length} ${list.length === 1 ? "Aufgabe" : "Aufgaben"}</h2>
-    <div class="card">${list.map((t, i) => `<div class="list-item row">
+    <div class="card">${byCat(list.map((t, i) => ({ t, i })), (x) => x.t).map(([c, grp]) => `<div class="cat-h">${CAT_ICON[c]} ${c}</div>` + grp.map(({ t, i }, gi) => `<div class="list-item row">
         <div class="grow" data-act="tpl-edit" data-i="${i}" style="cursor:pointer">
           <div class="title" style="font-size:16px">${esc(t.name)}${t.note ? ` <span style="font-size:13px">📝</span>` : ""}</div>
           <div class="sub">${esc(intervalText(t))}${t.part ? " · ⏱️ " + esc(t.part) : ""}${(() => { const n = bikeTypes().filter((ty) => ty !== tplType && hasTpl(ty, t.name)).length; return n ? ` · auch in ${n} ${n === 1 ? "weiterem Typ" : "weiteren Typen"}` : ""; })()}</div></div>
-        <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="-1" aria-label="nach oben" ${i ? "" : "disabled"}>↑</button>
-        <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="1" aria-label="nach unten" ${i < list.length - 1 ? "" : "disabled"}>↓</button>
-      </div>`).join("") || `<p class="sub">Noch keine Standard-Aufgaben für diesen Radtyp.</p>`}</div>
+      </div>`).join("")).join("") || `<p class="sub">Noch keine Standard-Aufgaben für diesen Radtyp.</p>`}</div>
     <button class="btn block" data-act="tpl-add" style="margin-top:0">+ Standard-Aufgabe hinzufügen</button>
     <div class="two" style="margin-top:8px">
       ${builtIn ? `<button class="btn ghost" data-act="tpl-reset">Vorschläge wiederherstellen</button>` : `<button class="btn danger" data-act="tpl-del-type">Radtyp löschen</button>`}
       <button class="btn ghost" data-act="close">Fertig</button>
     </div>
-    <p class="hint">Tipp: Antippen zum Bearbeiten, mit ↑ ↓ die Reihenfolge ändern. Eine Aufgabe eines Rads kannst du auch in ihrer Ansicht über „Als Standard übernehmen“ hierher kopieren.</p>`);
+    <p class="hint">Tipp: Antippen zum Bearbeiten. Sortiert wird automatisch nach Kategorie und Intervall (kürzestes zuerst). Eine Aufgabe eines Rads kannst du auch in ihrer Ansicht über „Als Standard übernehmen“ hierher kopieren.</p>`);
 }
 function tplTaskForm(i) {
   const isNew = i == null;
@@ -677,6 +739,7 @@ function tplTaskForm(i) {
     <form id="f-tpl">
       <label>Titel</label><input name="name" required placeholder="z. B. Federgabel-Service" value="${esc(t?.name)}" list="tpl-names-t">
       <datalist id="tpl-names-t">${ALL_TEMPLATE_NAMES.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <label>Kategorie</label>${catSelect('name="cat"', t ? catOf(t) : "Sonstiges")}
       <label>Intervall</label>
       <div class="two"><input name="every" type="number" inputmode="numeric" min="0" placeholder="z. B. 3" value="${iv.n}">
         <select name="unit">${unitOpt("t", "Tage")}${unitOpt("w", "Wochen")}${unitOpt("m", "Monate")}${unitOpt("j", "Jahre")}</select></div>
@@ -702,11 +765,12 @@ function tplTaskForm(i) {
     if (!f.elements.km.value && T[k][2]) f.elements.km.value = T[k][2];
     if (!f.elements.note.value) f.elements.note.value = T[k][3];
     if (!f.elements.part.value && PART_OF[k]) f.elements.part.value = PART_OF[k];
+    f.elements.cat.value = CAT_OF[k] || "Sonstiges";
   });
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
-    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part: fd.get("part").trim() };
+    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part: fd.get("part").trim(), cat: fd.get("cat") };
     const store = tplStore();
     const oldName = (t ? t.name : data.name).toLowerCase();
     const checked = new Set([tplType, ...fd.getAll("types")]);
@@ -750,7 +814,7 @@ function tplFromTask(bikeId, taskId) {
   const store = tplStore();
   const type = b.type || "Anderes";
   store[type] = store[type] || [];
-  const data = { name: t.name, days: t.days, km: t.km, note: t.note || "", part: t.part || "" };
+  const data = { name: t.name, days: t.days, km: t.km, note: t.note || "", part: t.part || "", cat: catOf(t) };
   const ex = store[type].find((x) => x.name.toLowerCase() === t.name.toLowerCase());
   if (ex && !confirm(`„${t.name}" gibt es schon in den Standard-Aufgaben für ${type}. Mit diesen Werten überschreiben?`)) return;
   if (ex) Object.assign(ex, data); else store[type].push({ id: uid(), ...data });
@@ -788,8 +852,9 @@ function bikeForm(id) {
     const box = document.getElementById("tpl-box"); if (!box) return;
     const type = f.elements.type.value;
     document.getElementById("tpl-label").textContent = "Standard-Wartungsaufgaben für " + type;
-    box.innerHTML = templatesFor(type).map((t, i) =>
-      `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("") || `<p class="sub" style="padding:10px 0">Für diesen Radtyp sind keine Standard-Aufgaben hinterlegt.</p>`;
+    box.innerHTML = byCat(templatesFor(type).map((t, i) => ({ t, i })), (x) => x.t).map(([c, list]) =>
+      `<div class="cat-h">${CAT_ICON[c]} ${c}</div>` + list.map(({ t, i }) =>
+      `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("")).join("") || `<p class="sub" style="padding:10px 0">Für diesen Radtyp sind keine Standard-Aufgaben hinterlegt.</p>`;
   };
   fillTpl();
   f.elements.type.addEventListener("change", fillTpl);
@@ -814,6 +879,7 @@ function bikeForm(id) {
     div.className = "card custom-task";
     div.innerHTML = `<div class="row"><strong class="grow">Eigene Aufgabe</strong><button type="button" class="link" style="color:var(--muted)" aria-label="Entfernen">✕ entfernen</button></div>
       <label>Titel</label><input class="c-name" placeholder="z. B. Federgabel-Service" list="tpl-names-c">
+      <label>Kategorie</label>${catSelect('class="c-cat"', "Sonstiges")}
       <label>Intervall</label>
       <div class="two"><input class="c-every" type="number" inputmode="numeric" min="0" placeholder="z. B. 6">
         <select class="c-unit"><option value="t">Tage</option><option value="w">Wochen</option><option value="m" selected>Monate</option><option value="j">Jahre</option></select></div>
@@ -829,6 +895,7 @@ function bikeForm(id) {
       if (!div.querySelector(".c-km").value && T[k][2]) div.querySelector(".c-km").value = T[k][2];
       if (!div.querySelector(".c-note").value) div.querySelector(".c-note").value = T[k][3];
       if (!div.querySelector(".c-part").value && PART_OF[k]) div.querySelector(".c-part").value = PART_OF[k];
+      div.querySelector(".c-cat").value = CAT_OF[k] || "Sonstiges";
     });
     document.getElementById("custom-box").appendChild(div);
     nameIn.focus();
@@ -848,12 +915,12 @@ function bikeForm(id) {
     } else {
       const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), photo, tasks: [], parts: {} };
       const tpls = templatesFor(nb.type);
-      fd.getAll("tpl").forEach((i) => { const t = tpls[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note, part: t.part, lastDate: null, lastKm: null }); });
+      fd.getAll("tpl").forEach((i) => { const t = tpls[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note, part: t.part, cat: catOf(t), lastDate: null, lastKm: null }); });
       let custom = 0;
       f.querySelectorAll(".custom-task").forEach((c) => {
         const name = c.querySelector(".c-name").value.trim(); if (!name) return;
         nb.tasks.push({ id: uid(), name, days: (Number(c.querySelector(".c-every").value) || 0) * UNIT[c.querySelector(".c-unit").value],
-          km: Number(c.querySelector(".c-km").value) || 0, note: c.querySelector(".c-note").value.trim(), part: c.querySelector(".c-part").value.trim(), lastDate: null, lastKm: null });
+          km: Number(c.querySelector(".c-km").value) || 0, note: c.querySelector(".c-note").value.trim(), part: c.querySelector(".c-part").value.trim(), cat: c.querySelector(".c-cat").value, lastDate: null, lastKm: null });
         custom++;
       });
       state.bikes.push(nb); save(); render(); bikeDetail(nb.id);
@@ -923,6 +990,7 @@ function taskForm(bikeId, taskId) {
     <form id="f-task">
       <label>Titel</label><input name="name" required placeholder="z. B. Federgabel-Service" value="${esc(t?.name)}" list="tpl-names">
       <datalist id="tpl-names">${ALL_TEMPLATE_NAMES.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <label>Kategorie</label>${catSelect('name="cat"', t ? catOf(t) : "Sonstiges")}
       <label>Intervall</label>
       <div class="two">
         <input name="every" type="number" inputmode="numeric" min="0" placeholder="z. B. 3" value="${iv.n}">
@@ -962,12 +1030,13 @@ function taskForm(bikeId, taskId) {
     if (!f.elements.km.value && hit[2]) f.elements.km.value = hit[2];
     if (!f.elements.note.value) f.elements.note.value = hit[3];
     if (!f.elements.part.value && PART_OF[k]) { f.elements.part.value = PART_OF[k]; togglePart(); }
+    f.elements.cat.value = CAT_OF[k] || "Sonstiges";
   });
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
     const part = fd.get("part").trim();
-    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part };
+    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part, cat: fd.get("cat") };
     let id = t?.id;
     if (t) {
       Object.assign(t, data);

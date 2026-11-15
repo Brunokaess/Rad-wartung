@@ -62,6 +62,7 @@
   .btn.ghost { background: var(--brand-soft); color: var(--brand); }
   .btn.danger { background: var(--red-soft); color: var(--red); }
   .btn.block { width: 100%; padding: 14px; font-size: 17px; margin-top: 8px; }
+  button:disabled { opacity: .3; cursor: default; }
   .link { background: none; color: var(--brand); padding: 4px 0; font-weight: 600; }
   .empty { text-align: center; padding: 40px 20px; color: var(--muted); }
   .empty .big { font-size: 46px; }
@@ -217,7 +218,13 @@ const PART_OF = {
   lenkerband: "Lenkerband", zuege: "Züge"
 };
 const BIKE_TYPES = Object.keys(TEMPLATE_SETS);
+/* Aktive Radtypen und Standard-Aufgaben: eigene, falls angepasst, sonst die Vorschläge */
+function bikeTypes() { return state.templates ? Object.keys(state.templates) : BIKE_TYPES; }
 function templatesFor(type) {
+  if (state.templates) return state.templates[type] || [];
+  return defaultTemplatesFor(type);
+}
+function defaultTemplatesFor(type) {
   return (TEMPLATE_SETS[type] || TEMPLATE_SETS["Anderes"]).map((k) => { const [name, days, km, note] = T[k]; return { name, days, km, note, part: PART_OF[k] || "" }; });
 }
 
@@ -407,7 +414,17 @@ document.addEventListener("click", (e) => {
     "later": () => { showLater = !showLater; renderDue(); },
     "sel-mode": () => { selMode = !selMode; selected.clear(); renderDue(); },
     "sel": () => { selected.has(d.key) ? selected.delete(d.key) : selected.add(d.key); renderDue(); },
-    "bulk": bulkForm
+    "bulk": bulkForm,
+    "tpl-manage": () => tplManager(),
+    "tpl-type": () => tplManager(d.type),
+    "tpl-new-type": tplNewType,
+    "tpl-add": () => tplTaskForm(null),
+    "tpl-edit": () => tplTaskForm(Number(d.i)),
+    "tpl-back": () => tplManager(tplType),
+    "tpl-move": () => { const l = tplStore()[tplType], i = Number(d.i), j = i + Number(d.dir); if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; save(); tplManager(tplType); },
+    "tpl-reset": () => { if (!confirm(`Standard-Aufgaben für ${tplType} auf die ursprünglichen Vorschläge zurücksetzen?`)) return; tplStore()[tplType] = defaultTemplatesFor(tplType).map((t) => ({ id: uid(), ...t })); save(); tplManager(tplType); toast("Zurückgesetzt"); },
+    "tpl-del-type": () => { if (!confirm(`Radtyp „${tplType}" mit seinen Standard-Aufgaben löschen? Räder dieser Art bleiben erhalten.`)) return; delete tplStore()[tplType]; tplType = null; save(); tplManager(); },
+    "tpl-from-task": () => tplFromTask(d.bike, d.task)
   };
   if (acts[a]) { e.preventDefault(); acts[a](); }
 });
@@ -536,7 +553,12 @@ function renderBikes() {
       <span style="color:var(--muted);font-size:22px">›</span></div>`;
   }).join("");
   if (!state.bikes.length) h = `<div class="empty"><div class="big">🚲</div><p>Noch keine Räder.</p></div>`;
-  view.innerHTML = h + `<button class="btn block" data-act="new-bike">+ Rad hinzufügen</button>`;
+  view.innerHTML = h + `<button class="btn block" data-act="new-bike">+ Rad hinzufügen</button>
+    <h2>Einstellungen</h2>
+    <div class="card row" data-act="tpl-manage" style="cursor:pointer"><div style="font-size:26px">⚙️</div>
+      <div class="grow"><div class="title">Standard-Aufgaben je Radtyp</div>
+      <div class="sub">Eigene Vorlagen für Rennrad, Mountainbike & Co.${state.templates ? " · angepasst" : ""}</div></div>
+      <span style="color:var(--muted);font-size:22px">›</span></div>`;
 }
 
 function bikeDetail(id) {
@@ -582,11 +604,120 @@ function partsOverview(b) {
   }).join("")}</div>`;
 }
 
+/* ---------- Eigene Standard-Aufgaben je Radtyp ---------- */
+let tplType = null;
+/* Beim ersten Bearbeiten werden die Vorschläge in die eigenen Daten kopiert */
+function tplStore() {
+  if (!state.templates) {
+    state.templates = {};
+    BIKE_TYPES.forEach((type) => { state.templates[type] = defaultTemplatesFor(type).map((t) => ({ id: uid(), ...t })); });
+  }
+  return state.templates;
+}
+function tplManager(type) {
+  const types = bikeTypes();
+  tplType = type && types.includes(type) ? type : (tplType && types.includes(tplType) ? tplType : types[0]);
+  const list = templatesFor(tplType);
+  const builtIn = BIKE_TYPES.includes(tplType);
+  openSheet(sheetHead("Standard-Aufgaben") + `
+    <p class="sub" style="margin-top:0">Diese Aufgaben werden vorgeschlagen, wenn du ein neues Rad dieser Art anlegst. Bestehende Räder behalten ihren eigenen Wartungsplan.</p>
+    <div class="chips">${types.map((t) => `<button class="chip ${t === tplType ? "on" : ""}" data-act="tpl-type" data-type="${esc(t)}">${esc(t)}</button>`).join("")}
+      <button class="chip" data-act="tpl-new-type">+ Radtyp</button></div>
+    <h2>${esc(tplType)} · ${list.length} ${list.length === 1 ? "Aufgabe" : "Aufgaben"}</h2>
+    <div class="card">${list.map((t, i) => `<div class="list-item row">
+        <div class="grow" data-act="tpl-edit" data-i="${i}" style="cursor:pointer">
+          <div class="title" style="font-size:16px">${esc(t.name)}${t.note ? ` <span style="font-size:13px">📝</span>` : ""}</div>
+          <div class="sub">${esc(intervalText(t))}${t.part ? " · ⏱️ " + esc(t.part) : ""}</div></div>
+        <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="-1" aria-label="nach oben" ${i ? "" : "disabled"}>↑</button>
+        <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="1" aria-label="nach unten" ${i < list.length - 1 ? "" : "disabled"}>↓</button>
+      </div>`).join("") || `<p class="sub">Noch keine Standard-Aufgaben für diesen Radtyp.</p>`}</div>
+    <button class="btn block" data-act="tpl-add" style="margin-top:0">+ Standard-Aufgabe hinzufügen</button>
+    <div class="two" style="margin-top:8px">
+      ${builtIn ? `<button class="btn ghost" data-act="tpl-reset">Vorschläge wiederherstellen</button>` : `<button class="btn danger" data-act="tpl-del-type">Radtyp löschen</button>`}
+      <button class="btn ghost" data-act="close">Fertig</button>
+    </div>
+    <p class="hint">Tipp: Antippen zum Bearbeiten, mit ↑ ↓ die Reihenfolge ändern. Eine Aufgabe eines Rads kannst du auch in ihrer Ansicht über „Als Standard übernehmen“ hierher kopieren.</p>`);
+}
+function tplTaskForm(i) {
+  const isNew = i == null;
+  const t = isNew ? null : templatesFor(tplType)[i];
+  const iv = splitDays(t?.days);
+  const unitOpt = (u, n) => `<option value="${u}" ${iv.u === u ? "selected" : ""}>${n}</option>`;
+  openSheet(sheetHead(isNew ? "Neue Standard-Aufgabe" : "Standard-Aufgabe") + `
+    <div class="sub">für ${esc(tplType)}</div>
+    <form id="f-tpl">
+      <label>Titel</label><input name="name" required placeholder="z. B. Federgabel-Service" value="${esc(t?.name)}" list="tpl-names-t">
+      <datalist id="tpl-names-t">${ALL_TEMPLATE_NAMES.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <label>Intervall</label>
+      <div class="two"><input name="every" type="number" inputmode="numeric" min="0" placeholder="z. B. 3" value="${iv.n}">
+        <select name="unit">${unitOpt("t", "Tage")}${unitOpt("w", "Wochen")}${unitOpt("m", "Monate")}${unitOpt("j", "Jahre")}</select></div>
+      <label>und/oder alle … km</label><input name="km" type="number" inputmode="numeric" min="0" placeholder="optional, z. B. 1000" value="${t?.km || ""}">
+      <label>Notiz / Anleitung</label><textarea name="note" rows="5" placeholder="Wie wird es gemacht? Oder YouTube-Link einfügen">${esc(t?.note)}</textarea>
+      <label>Verschleißteil (optional)</label><input name="part" placeholder="z. B. Kette" value="${esc(t?.part)}" list="part-names-t">
+      <datalist id="part-names-t">${[...new Set(Object.values(PART_OF))].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <button class="btn block" type="submit">Speichern</button>
+      ${isNew ? "" : `<button class="btn danger block" type="button" id="del-tpl">Aus den Standard-Aufgaben entfernen</button>`}
+      <button class="btn ghost block" type="button" data-act="tpl-back">Zurück</button>
+    </form>`);
+  const f = document.getElementById("f-tpl");
+  if (isNew) f.elements.name.addEventListener("change", () => {
+    const k = Object.keys(T).find((key) => T[key][0] === f.elements.name.value); if (!k) return;
+    const s = splitDays(T[k][1]);
+    if (!f.elements.every.value) { f.elements.every.value = s.n; f.elements.unit.value = s.u; }
+    if (!f.elements.km.value && T[k][2]) f.elements.km.value = T[k][2];
+    if (!f.elements.note.value) f.elements.note.value = T[k][3];
+    if (!f.elements.part.value && PART_OF[k]) f.elements.part.value = PART_OF[k];
+  });
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part: fd.get("part").trim() };
+    const list = tplStore()[tplType];
+    if (isNew) list.push({ id: uid(), ...data }); else Object.assign(list[i], data);
+    save(); tplManager(tplType); toast("Gespeichert");
+  });
+  if (!isNew) document.getElementById("del-tpl").addEventListener("click", () => {
+    if (!confirm(`„${t.name}" aus den Standard-Aufgaben für ${tplType} entfernen?`)) return;
+    tplStore()[tplType].splice(i, 1); save(); tplManager(tplType);
+  });
+}
+function tplNewType() {
+  const types = bikeTypes();
+  openSheet(sheetHead("Neuer Radtyp") + `
+    <form id="f-type">
+      <label>Name</label><input name="name" required placeholder="z. B. Lastenrad, Tandem, Kinderrad">
+      <label>Starten mit</label>
+      <select name="copy"><option value="">leerer Liste</option>${types.map((t) => `<option value="${esc(t)}">Kopie von ${esc(t)}</option>`).join("")}</select>
+      <button class="btn block" type="submit">Anlegen</button>
+      <button class="btn ghost block" type="button" data-act="tpl-back">Zurück</button>
+    </form>`);
+  const f = document.getElementById("f-type");
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = f.elements.name.value.trim();
+    const store = tplStore();
+    if (store[name]) { toast("Diesen Radtyp gibt es schon"); return; }
+    store[name] = f.elements.copy.value ? store[f.elements.copy.value].map((t) => ({ ...t, id: uid() })) : [];
+    save(); tplManager(name); toast("Radtyp angelegt");
+  });
+}
+function tplFromTask(bikeId, taskId) {
+  const b = bikeById(bikeId); const t = b && b.tasks.find((x) => x.id === taskId); if (!t) return;
+  const store = tplStore();
+  const type = b.type || "Anderes";
+  store[type] = store[type] || [];
+  const data = { name: t.name, days: t.days, km: t.km, note: t.note || "", part: t.part || "" };
+  const ex = store[type].find((x) => x.name.toLowerCase() === t.name.toLowerCase());
+  if (ex && !confirm(`„${t.name}" gibt es schon in den Standard-Aufgaben für ${type}. Mit diesen Werten überschreiben?`)) return;
+  if (ex) Object.assign(ex, data); else store[type].push({ id: uid(), ...data });
+  save(); toast("Als Standard für " + type + " gespeichert");
+}
+
 /* ---------- Formulare ---------- */
 function bikeForm(id) {
   const b = id ? bikeById(id) : null;
   const tpl = !b ? `<label id="tpl-label">Standard-Wartungsaufgaben</label><div class="card" style="padding:4px 14px" id="tpl-box"></div>
-    <p class="hint">Passend zur Art des Rads. Abwählen, was nicht gebraucht wird.</p>
+    <p class="hint">Passend zur Art des Rads. Abwählen, was nicht gebraucht wird. Die Vorlagen selbst änderst du unter <strong>Räder → Standard-Aufgaben je Radtyp</strong>.</p>
     <label>Eigene Wartungsaufgaben</label>
     <div id="custom-box"></div>
     <button class="btn ghost block" type="button" id="add-custom" style="margin-top:0">+ Eigene Wartungsaufgabe hinzufügen</button>
@@ -595,7 +726,7 @@ function bikeForm(id) {
     <form id="f-bike">
       <label>Name</label><input name="name" required placeholder="z. B. Mein Trekkingrad" value="${esc(b?.name)}">
       <div class="two">
-        <div><label>Art</label><select name="type">${BIKE_TYPES.map((t) => `<option ${b?.type === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div><label>Art</label><select name="type">${[...new Set([...bikeTypes(), ...(b?.type ? [b.type] : [])])].map((t) => `<option ${b?.type === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
         <div><label>Tachostand (km)</label><input name="km" type="number" inputmode="numeric" min="0" placeholder="optional" value="${b?.km ?? ""}"></div>
       </div>
       <label>Notiz</label><input name="notes" placeholder="z. B. Reifengröße 28 × 1,6" value="${esc(b?.notes)}">
@@ -609,7 +740,7 @@ function bikeForm(id) {
     const type = f.elements.type.value;
     document.getElementById("tpl-label").textContent = "Standard-Wartungsaufgaben für " + type;
     box.innerHTML = templatesFor(type).map((t, i) =>
-      `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("");
+      `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("") || `<p class="sub" style="padding:10px 0">Für diesen Radtyp sind keine Standard-Aufgaben hinterlegt.</p>`;
   };
   fillTpl();
   f.elements.type.addEventListener("change", fillTpl);
@@ -690,6 +821,7 @@ function taskDetail(bikeId, taskId) {
     <h2>Notiz & Anleitung</h2>
     <div class="card" style="font-size:15px;line-height:1.5">${t.note ? linkify(t.note) : `<span class="sub">Noch keine Notiz. Unter „Bearbeiten" kannst du eine Anleitung oder einen YouTube-Link einfügen.</span>`}</div>
     <a class="btn ghost block" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box" href="${ytSearch(t.name, b)}" target="_blank" rel="noopener">▶︎ Anleitung auf YouTube suchen</a>
+    <button class="link" style="display:block;margin:10px auto 0" data-act="tpl-from-task" data-bike="${b.id}" data-task="${t.id}">⚙️ Als Standard für ${esc(b.type || "Anderes")} übernehmen</button>
     ${done.length ? `<h2>Zuletzt erledigt</h2><div class="card">${done.map((l) => `<div class="list-item"><div class="title" style="font-size:15px">${fmt(l.date)}${l.km != null ? " · " + km(l.km) : ""}</div>${l.partChange ? `<div class="sub">🔄 ${esc(l.partChange.name)} gewechselt${l.partChange.label ? " (" + esc(l.partChange.label) + ")" : ""}</div>` : ""}${l.note ? `<div class="sub">${esc(l.note)}</div>` : ""}</div>`).join("")}</div>` : ""}
     <div class="two" style="margin-top:8px">
       <button class="btn ghost" data-act="edit-task" data-bike="${b.id}" data-task="${t.id}">Bearbeiten</button>

@@ -116,18 +116,28 @@
     border: 1px solid var(--line); border-radius: 11px; padding: 12px; -webkit-appearance: none; appearance: none;
   }
   textarea { min-height: 70px; resize: vertical; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .hint { font-size: 13px; color: var(--muted); margin: 6px 2px 0; }
   .chk { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 16px; color: var(--ink); margin: 0; font-weight: 400; }
   .chk input { width: 22px; height: 22px; -webkit-appearance: checkbox; appearance: auto; flex: none; }
-  .toast { position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 14px; z-index: 30; opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }
+  .toast { position: fixed; left: 50%; bottom: calc(140px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 14px; z-index: 30; opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }
   .toast.show { opacity: 1; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0 2px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { white-space: nowrap; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 99px; padding: 8px 13px; font-size: 14px; font-weight: 600; }
+  .chip.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .tick { width: 26px; height: 26px; flex: none; border-radius: 13px; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; }
+  .card.picked { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
+  .card.picked .tick { background: var(--brand); border-color: var(--brand); }
+  .selbar { position: fixed; left: 12px; right: 12px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 9; max-width: 616px; margin: 0 auto;
+    display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 10px 10px 16px; box-shadow: 0 6px 24px rgba(0,0,0,.15); }
   ol.steps { padding-left: 20px; margin: 6px 0; font-size: 15px; } ol.steps li { margin: 4px 0; }
 </style>
 </head>
 <body>
 <header>
-  <h1 id="h-title">Fällig</h1>
+  <h1 id="h-title">Offen</h1>
   <p id="h-sub"></p>
 </header>
 <main id="view"></main>
@@ -135,7 +145,7 @@
 <nav class="tabs" id="tabs">
   <button data-tab="due" class="active">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>
-    Fällig<span class="badge" id="badge" hidden></span>
+    Offen<span class="badge" id="badge" hidden></span>
   </button>
   <button data-tab="cal">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
@@ -160,22 +170,120 @@
 "use strict";
 /* ---------- Daten ---------- */
 const KEY = "rad-wartung-daten-v1";
-const TEMPLATES = [
-  { name: "Reifendruck prüfen", days: 14, km: 0 },
-  { name: "Kette reinigen & ölen", days: 30, km: 300 },
-  { name: "Bremsen prüfen (Beläge, Funktion)", days: 90, km: 1000 },
-  { name: "Kette auf Verschleiß messen", days: 180, km: 1500 },
-  { name: "Schaltung einstellen", days: 180, km: 0 },
-  { name: "Licht & Reflektoren prüfen", days: 90, km: 0 },
-  { name: "Schrauben nachziehen", days: 180, km: 0 },
-  { name: "Große Inspektion", days: 365, km: 3000 }
-];
-const BIKE_TYPES = ["Trekkingrad", "Rennrad", "Mountainbike", "E-Bike", "Stadtrad", "Gravelbike", "Anderes"];
+/* Bausteine für Standard-Wartungsaufgaben: [Titel, Tage, km, Notiz] */
+const T = {
+  druck14:   ["Reifendruck prüfen", 14, 0, "Druck mit Standpumpe mit Manometer prüfen. Der empfohlene Bereich steht auf der Reifenflanke (bar/PSI)."],
+  druck7:    ["Reifendruck prüfen", 7, 0, "Rennradreifen verlieren schneller Luft: vor längeren Fahrten prüfen. Richtwert je nach Gewicht und Breite 5–7 bar, Angabe auf der Reifenflanke beachten."],
+  kette:     ["Kette reinigen & ölen", 30, 300, "Kette mit Lappen abwischen, bei starkem Schmutz Kettenreiniger. Auf jede Rolle einen Tropfen Kettenöl geben, kurz durchkurbeln, Überschuss abwischen."],
+  ketteRR:   ["Kette reinigen & ölen", 21, 200, "Kette mit Lappen abwischen und mit dünnflüssigem Öl oder Wachs schmieren, Überschuss gründlich abwischen (zieht sonst Dreck an)."],
+  ketteMTB:  ["Kette reinigen & ölen", 14, 150, "Nach Schlamm- und Regenfahrten immer. Kette reinigen, trocknen lassen und mit Nassöl schmieren, Überschuss abwischen."],
+  ketteMess: ["Kette auf Verschleiß messen", 180, 1500, "Mit einer Kettenverschleißlehre messen. Bei 11-/12-fach ab 0,5 %, sonst ab 0,75 % die Kette tauschen, sonst verschleißen Ritzel und Kettenblätter mit."],
+  bremsen:   ["Bremsen prüfen", 90, 1000, "Belagdicke prüfen (Felgenbremse: Verschleißrillen, Scheibe: mind. ca. 0,5 mm Belag). Bremshebel dürfen nicht bis zum Lenker durchziehen."],
+  scheiben:  ["Scheibenbremsbeläge prüfen", 60, 800, "Rad ausbauen und von oben in den Bremssattel schauen. Belag samt Trägerplatte unter ca. 1,5 mm tauschen. Quietschen kann auf verölte Beläge hindeuten."],
+  entlueften:["Hydraulische Bremsen entlüften", 365, 0, "Wenn der Druckpunkt weich wird oder wandert. Das nötige Entlüftungskit hängt vom Hersteller ab (Shimano: Mineralöl, SRAM: DOT)."],
+  schaltung: ["Schaltung einstellen", 180, 0, "Wenn die Kette springt oder rattert: am Einstellrädchen am Schaltwerk oder Schalthebel in kleinen Viertelumdrehungen nachstellen."],
+  zuege:     ["Schalt- & Bremszüge prüfen", 365, 0, "Züge auf Rost und ausgefranste Enden prüfen. Schwergängige Züge tauschen."],
+  licht:     ["Licht & Reflektoren prüfen", 90, 0, "Vorder- und Rücklicht einschalten, Kabel und Stecker prüfen, Reflektoren auf Bruch prüfen."],
+  schrauben: ["Schrauben nachziehen", 180, 0, "Vorbau, Lenker, Sattelstütze, Pedale, Gepäckträger und Schutzbleche prüfen. Carbonteile nur mit Drehmomentschlüssel anziehen."],
+  traeger:   ["Gepäckträger & Schutzbleche prüfen", 180, 0, "Befestigungsschrauben nachziehen und Streben auf Risse prüfen. Schutzbleche dürfen nicht schleifen."],
+  reifenRR:  ["Reifen auf Schnitte prüfen", 30, 500, "Lauffläche absuchen und kleine Steinchen oder Glassplitter mit einem Zahnstocher herausholen. Bei sichtbarer Karkasse den Reifen tauschen."],
+  reifen:    ["Reifen auf Verschleiß prüfen", 90, 1000, "Profil und Flanken auf Risse und Abnutzung prüfen. Hinten verschleißt der Reifen schneller."],
+  laufrad:   ["Laufräder & Speichen prüfen", 180, 0, "Rad drehen und auf Seitenschlag achten. Speichen paarweise zusammendrücken, lockere Speichen nachspannen lassen."],
+  lenkerband:["Lenkerband prüfen", 365, 0, "Bei Rissen oder rutschigem Griff neu wickeln, von unten nach oben."],
+  gabel:     ["Federgabel: Standrohre reinigen", 30, 0, "Nach jeder dreckigen Fahrt Standrohre und Dichtungen mit einem weichen Lappen abwischen, etwas Gabelöl oder Silikonspray auf die Dichtungen geben."],
+  gabelSvc:  ["Federgabel: kleiner Service", 180, 0, "Herstellerempfehlung meist alle 50 Fahrstunden: Tauchrohre abziehen, Schaumringe ölen, Öl wechseln. Alternativ beim Händler machen lassen."],
+  daempfer:  ["Luftdruck Gabel/Dämpfer prüfen", 30, 0, "Mit einer Dämpferpumpe prüfen. Den Negativfederweg (Sag, ca. 20–30 %) mit dem Gummiring am Standrohr kontrollieren."],
+  tubeless:  ["Tubeless-Milch nachfüllen", 90, 0, "Dichtmilch trocknet aus. Ventileinsatz herausdrehen, je nach Reifenbreite ca. 30–60 ml einfüllen und den Reifen drehen, damit sie sich verteilt."],
+  lager:     ["Steuersatz & Lager prüfen", 180, 0, "Vorderbremse ziehen und das Rad vor und zurück schieben: Klackern deutet auf Spiel im Steuersatz hin. Kurbel seitlich auf Spiel prüfen."],
+  akku:      ["Akku & Kontakte pflegen", 30, 0, "Kontakte trocken und sauber halten. Längere Pausen bei ca. 30–60 % Ladung überbrücken, Akku nicht in Kälte oder Hitze laden."],
+  ebikeInsp: ["E-Bike-Inspektion beim Händler", 365, 3000, "Motor-Software-Update, Fehlerspeicher, Akkudiagnose. Nur der Fachhändler hat die Diagnose-Software (z. B. Bosch, Shimano)."],
+  nabe:      ["Nabenschaltung prüfen", 365, 0, "Markierungen am Schaltzug bzw. an der Nabe auf Übereinstimmung prüfen (siehe Herstelleranleitung). Ölwechsel je nach Modell alle paar tausend Kilometer."],
+  inspektion:["Große Inspektion", 365, 3000, "Kompletter Durchgang: alle Punkte oben, Lager, Züge, Laufräder. Wahlweise selbst oder in der Werkstatt."]
+};
+const TEMPLATE_SETS = {
+  "Trekkingrad":  ["druck14", "kette", "ketteMess", "bremsen", "schaltung", "licht", "traeger", "reifen", "schrauben", "inspektion"],
+  "Stadtrad":     ["druck14", "kette", "bremsen", "nabe", "licht", "traeger", "reifen", "schrauben", "inspektion"],
+  "Rennrad":      ["druck7", "ketteRR", "ketteMess", "reifenRR", "bremsen", "schaltung", "zuege", "laufrad", "lenkerband", "schrauben", "inspektion"],
+  "Mountainbike": ["druck14", "ketteMTB", "ketteMess", "scheiben", "entlueften", "gabel", "gabelSvc", "daempfer", "tubeless", "lager", "schrauben"],
+  "Gravelbike":   ["druck14", "ketteRR", "ketteMess", "scheiben", "tubeless", "reifen", "schaltung", "lenkerband", "schrauben", "inspektion"],
+  "E-Bike":       ["druck14", "kette", "ketteMess", "scheiben", "akku", "licht", "schaltung", "reifen", "schrauben", "ebikeInsp"],
+  "Anderes":      ["druck14", "kette", "ketteMess", "bremsen", "schaltung", "licht", "schrauben", "inspektion"]
+};
+/* Welche Standardaufgabe zu welchem Verschleißteil gehört */
+const PART_OF = {
+  kette: "Kette", ketteRR: "Kette", ketteMTB: "Kette", ketteMess: "Kette",
+  bremsen: "Bremsbeläge", scheiben: "Bremsbeläge", entlueften: "Bremsflüssigkeit",
+  reifen: "Reifen", reifenRR: "Reifen", tubeless: "Dichtmilch",
+  lenkerband: "Lenkerband", zuege: "Züge"
+};
+const BIKE_TYPES = Object.keys(TEMPLATE_SETS);
+function templatesFor(type) {
+  return (TEMPLATE_SETS[type] || TEMPLATE_SETS["Anderes"]).map((k) => { const [name, days, km, note] = T[k]; return { name, days, km, note, part: PART_OF[k] || "" }; });
+}
+
+/* ---------- Verschleißteile: Alter & Lebensdauer ---------- */
+function ageText(days) {
+  days = Math.max(0, days);
+  if (days < 31) return days + (days === 1 ? " Tag" : " Tage");
+  const m = Math.floor(days / 30.44);
+  if (m < 12) return m + (m === 1 ? " Monat" : " Monate");
+  const y = Math.floor(m / 12), r = m % 12;
+  return y + (y === 1 ? " Jahr" : " Jahre") + (r ? " " + r + (r === 1 ? " Monat" : " Monate") : "");
+}
+function partAge(b, name) {
+  const p = (b.parts || {})[name];
+  if (!p || !p.installedDate) return null;
+  const days = diffDays(p.installedDate, todayISO());
+  const used = p.installedKm != null && b.km != null ? Math.max(0, b.km - p.installedKm) : null;
+  return { days, km: used, text: ageText(days) + (used != null ? " · " + km(used) : "") };
+}
+const lifetimeText = (h) => ageText(h.days) + (h.km != null ? " · " + km(h.km) : "");
+/* Teil wechseln: altes Teil mit Lebensdauer in die Historie, neues startet bei 0 */
+function changePart(b, name, date, kmVal, label) {
+  b.parts = b.parts || {};
+  const old = b.parts[name];
+  if (old && old.installedDate === date && old.installedKm === kmVal) return false; // am selben Tag schon gewechselt
+  const hist = old?.history || [];
+  let prev = null;
+  if (old && old.installedDate) {
+    prev = { label: old.label || "", from: old.installedDate, to: date, days: diffDays(old.installedDate, date),
+      km: old.installedKm != null && kmVal != null ? Math.max(0, kmVal - old.installedKm) : null };
+    hist.unshift(prev);
+  }
+  b.parts[name] = { installedDate: date, installedKm: kmVal, label: label || "", history: hist };
+  return prev;
+}
+const ALL_TEMPLATE_NAMES = [...new Set(Object.values(T).map((t) => t[0]))];
+
+/* Intervall-Hilfen: intern immer Tage */
+const UNIT = { t: 1, w: 7, m: 30, j: 365 };
+function splitDays(d) {
+  if (!d) return { n: "", u: "m" };
+  if (d % 365 === 0) return { n: d / 365, u: "j" };
+  if (d % 30 === 0) return { n: d / 30, u: "m" };
+  if (d % 7 === 0) return { n: d / 7, u: "w" };
+  return { n: d, u: "t" };
+}
+function daysText(d) {
+  const s = splitDays(d);
+  if (s.n === 1) return { t: "täglich", w: "wöchentlich", m: "monatlich", j: "jährlich" }[s.u];
+  return "alle " + s.n + " " + { t: "Tage", w: "Wochen", m: "Monate", j: "Jahre" }[s.u];
+}
+/* Notiz anzeigen: Text escapen, Zeilenumbrüche behalten, Links klickbar machen */
+function linkify(text) {
+  return esc(text).replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, (u) => {
+    const yt = /youtu\.?be/.test(u);
+    return `<a href="${u}" target="_blank" rel="noopener" style="color:var(--brand);font-weight:600;word-break:break-all">${yt ? "▶︎ YouTube-Video öffnen" : u}</a>`;
+  }).replace(/\n/g, "<br>");
+}
+const ytSearch = (name, bike) => "https://www.youtube.com/results?search_query=" + encodeURIComponent("Fahrrad " + name + (bike && bike.type && bike.type !== "Anderes" ? " " + bike.type : "") + " Anleitung");
 
 let state = load();
 let tab = "due";
 let calMonth = startOfMonth(new Date());
 let calSel = todayISO();
+let filterBike = "all", selMode = false, showLater = false;
+const selected = new Set();
 
 function blank() { return { version: 1, bikes: [], log: [], meta: { lastChange: null, lastBackup: null } }; }
 function load() {
@@ -183,10 +291,11 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return blank();
     const d = JSON.parse(raw);
-    return valid(d) ? d : blank();
+    return valid(d) ? migrate(d) : blank();
   } catch (e) { return blank(); }
 }
 function valid(d) { return d && Array.isArray(d.bikes) && Array.isArray(d.log); }
+function migrate(d) { d.meta = d.meta || {}; d.bikes.forEach((b) => { b.parts = b.parts || {}; b.tasks = b.tasks || []; }); return d; }
 function save(changed = true) {
   if (changed) state.meta.lastChange = new Date().toISOString();
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -209,7 +318,7 @@ const km = (n) => Number(n || 0).toLocaleString("de-DE") + " km";
 const bikeById = (id) => state.bikes.find((b) => b.id === id);
 function intervalText(t) {
   const p = [];
-  if (t.days) p.push(t.days % 30 === 0 && t.days >= 30 ? (t.days / 30 === 1 ? "monatlich" : "alle " + t.days / 30 + " Monate") : t.days === 7 ? "wöchentlich" : "alle " + t.days + " Tage");
+  if (t.days) p.push(daysText(t.days));
   if (t.km) p.push("alle " + km(t.km));
   return p.join(" oder ") || "ohne Intervall";
 }
@@ -242,7 +351,7 @@ function allTasks() {
 const view = document.getElementById("view");
 document.getElementById("tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-tab]"); if (!b) return;
-  tab = b.dataset.tab; render(); window.scrollTo(0, 0);
+  tab = b.dataset.tab; selMode = false; selected.clear(); render(); window.scrollTo(0, 0);
 });
 function setHeader(t, s) { document.getElementById("h-title").textContent = t; document.getElementById("h-sub").textContent = s || ""; }
 function render() {
@@ -280,6 +389,7 @@ document.addEventListener("click", (e) => {
     done: () => doneForm(d.bike, d.task),
     "free-work": () => doneForm(d.bike, null),
     "km": () => kmForm(d.bike),
+    "task": () => taskDetail(d.bike, d.task),
     "new-task": () => taskForm(d.bike),
     "edit-task": () => taskForm(d.bike, d.task),
     "del-log": () => delLog(d.log),
@@ -292,7 +402,12 @@ document.addEventListener("click", (e) => {
     "ics": exportICS,
     "wipe": wipe,
     "go-more": () => { tab = "more"; render(); },
-    "go-bikes": () => { tab = "bikes"; render(); }
+    "go-bikes": () => { tab = "bikes"; render(); },
+    "filter": () => { filterBike = d.bike; selected.clear(); renderDue(); },
+    "later": () => { showLater = !showLater; renderDue(); },
+    "sel-mode": () => { selMode = !selMode; selected.clear(); renderDue(); },
+    "sel": () => { selected.has(d.key) ? selected.delete(d.key) : selected.add(d.key); renderDue(); },
+    "bulk": bulkForm
   };
   if (acts[a]) { e.preventDefault(); acts[a](); }
 });
@@ -309,36 +424,52 @@ function backupBanner() {
 function taskCard(x) {
   const { bike, task, st } = x;
   const label = { over: "Überfällig", soon: "Bald", ok: "OK", new: "Neu" }[st.level];
+  const age = task.part ? partAge(bike, task.part) : null;
+  const key = bike.id + "|" + task.id;
+  const on = selected.has(key);
+  const info = `<div class="title">${esc(task.name)}${task.note ? ` <span style="color:var(--muted);font-size:14px" title="Mit Anleitung">📝</span>` : ""}</div>
+      <div class="sub">${esc(bike.name)} · ${esc(st.text)}</div>
+      ${age ? `<div class="sub">⏱️ ${esc(task.part)}: ${esc(age.text)} alt</div>` : ""}
+      <div class="sub" style="margin-top:4px"><span class="pill ${st.level}">${label}</span> ${task.lastDate ? "zuletzt " + fmt(task.lastDate) + (task.lastKm != null ? " · " + km(task.lastKm) : "") : ""}</div>`;
+  if (selMode) return `<div class="card row ${on ? "picked" : ""}" data-act="sel" data-key="${key}" style="cursor:pointer">
+      <span class="tick">${on ? "✓" : ""}</span><div class="grow">${info}</div></div>`;
   return `<div class="card row">
     <div class="bar ${st.level}"></div>
-    <div class="grow">
-      <div class="title">${esc(task.name)}</div>
-      <div class="sub">${esc(bike.name)} · ${esc(st.text)}</div>
-      <div class="sub" style="margin-top:4px"><span class="pill ${st.level}">${label}</span> ${task.lastDate ? "zuletzt " + fmt(task.lastDate) : ""}</div>
-    </div>
+    <div class="grow" data-act="task" data-bike="${bike.id}" data-task="${task.id}" style="cursor:pointer">${info}</div>
     <button class="btn small" data-act="done" data-bike="${bike.id}" data-task="${task.id}">Erledigt</button>
   </div>`;
 }
 function renderDue() {
-  const items = allTasks();
-  const over = items.filter((x) => x.st.level === "over");
-  const soon = items.filter((x) => x.st.level === "soon");
+  if (filterBike !== "all" && !bikeById(filterBike)) filterBike = "all";
+  const items = allTasks().filter((x) => filterBike === "all" || x.bike.id === filterBike);
+  const sortD = (a, b) => (a.st.daysLeft ?? -9999) - (b.st.daysLeft ?? -9999) || (a.st.kmLeft ?? 9e9) - (b.st.kmLeft ?? 9e9);
+  const over = items.filter((x) => x.st.level === "over").sort(sortD);
+  const soon = items.filter((x) => x.st.level === "soon").sort(sortD);
   const neu = items.filter((x) => x.st.level === "new");
-  const ok = items.filter((x) => x.st.level === "ok");
-  setHeader("Fällig", state.bikes.length ? (over.length ? over.length + " überfällig" : "Alles im grünen Bereich") + " · " + state.bikes.length + (state.bikes.length === 1 ? " Rad" : " Räder") : "");
+  const ok = items.filter((x) => x.st.level === "ok").sort(sortD);
+  const open = over.length + soon.length + neu.length;
+  setHeader("Offen", !state.bikes.length ? "" : open ? open + (open === 1 ? " offene Aufgabe" : " offene Aufgaben") + (over.length ? ", davon " + over.length + " überfällig" : "") : "Alles erledigt 👍");
   if (!state.bikes.length) {
     view.innerHTML = `<div class="empty"><div class="big">🚲</div><p><strong>Noch keine Räder angelegt.</strong><br>Lege das erste Rad an. Typische Wartungsarbeiten werden gleich vorgeschlagen.</p>
       <button class="btn" data-act="new-bike">Erstes Rad anlegen</button>
       <p class="hint" style="margin-top:24px">Daten schon auf einem anderen Gerät? <button class="link" data-act="go-more">Aus iCloud laden</button></p></div>`;
     return;
   }
-  const sortD = (a, b) => (a.st.daysLeft ?? 9999) - (b.st.daysLeft ?? 9999);
   let h = backupBanner();
-  if (over.length) h += `<h2>Überfällig</h2>` + over.sort(sortD).map(taskCard).join("");
-  if (soon.length) h += `<h2>Diese Woche</h2>` + soon.sort(sortD).map(taskCard).join("");
+  if (state.bikes.length > 1) h += `<div class="chips">${[["all", "Alle Räder"], ...state.bikes.map((b) => [b.id, b.name])].map(([id, n]) =>
+    `<button class="chip ${filterBike === id ? "on" : ""}" data-act="filter" data-bike="${id}">${esc(n)}</button>`).join("")}</div>`;
+  const shown = filterBike === "all" ? state.bikes : [bikeById(filterBike)];
+  h += `<div class="chips">${shown.map((b) => `<button class="chip" data-act="km" data-bike="${b.id}">🚲 ${state.bikes.length > 1 ? esc(b.name) + ": " : "Tacho: "}${b.km != null ? km(b.km) : "km eintragen"} ✎</button>`).join("")}</div>`;
+  if (open) h += `<div class="row" style="margin:12px 4px -8px"><div class="grow sub">${selMode ? "Tippe auf die Aufgaben, die du erledigt hast." : ""}</div>
+    <button class="link" data-act="sel-mode">${selMode ? "Abbrechen" : "☑︎ Mehrere abhaken"}</button></div>`;
+  if (over.length) h += `<h2>Überfällig</h2>` + over.map(taskCard).join("");
+  if (soon.length) h += `<h2>Bald fällig</h2>` + soon.map(taskCard).join("");
   if (neu.length) h += `<h2>Noch kein Datum</h2><p class="hint" style="margin:-4px 4px 8px">Tippe auf „Erledigt", wenn du ungefähr weißt, wann es zuletzt gemacht wurde.</p>` + neu.map(taskCard).join("");
-  if (ok.length) h += `<h2>Später</h2>` + ok.sort(sortD).map(taskCard).join("");
-  if (!items.length) h += `<div class="empty"><p>Für deine Räder sind noch keine Wartungsarbeiten angelegt.</p><button class="btn" data-act="go-bikes">Zu den Rädern</button></div>`;
+  if (!open && items.length) h += `<div class="empty" style="padding:24px"><div class="big">✅</div><p>Gerade ist nichts fällig.</p></div>`;
+  if (ok.length) h += showLater ? `<h2>Später fällig</h2>` + ok.map(taskCard).join("") + `<button class="link" data-act="later">Weniger anzeigen</button>`
+    : `<button class="btn ghost block" data-act="later">Später fällige Aufgaben anzeigen (${ok.length})</button>`;
+  if (!items.length) h += `<div class="empty"><p>Für ${filterBike === "all" ? "deine Räder" : "dieses Rad"} sind noch keine Wartungsarbeiten angelegt.</p><button class="btn" data-act="go-bikes">Zu den Rädern</button></div>`;
+  if (selMode) h += `<div class="selbar"><div class="grow"><strong>${selected.size}</strong> ausgewählt</div><button class="btn" data-act="bulk" ${selected.size ? "" : "disabled style='opacity:.5'"}>✓ Abhaken</button></div><div style="height:70px"></div>`;
   view.innerHTML = h;
 }
 
@@ -413,8 +544,8 @@ function bikeDetail(id) {
   const tasks = b.tasks.map((t) => {
     const st = status(b, t);
     return `<div class="list-item row"><div class="bar ${st.level}"></div>
-      <div class="grow" data-act="edit-task" data-bike="${b.id}" data-task="${t.id}" style="cursor:pointer">
-        <div class="title" style="font-size:16px">${esc(t.name)}</div>
+      <div class="grow" data-act="task" data-bike="${b.id}" data-task="${t.id}" style="cursor:pointer">
+        <div class="title" style="font-size:16px">${esc(t.name)}${t.note ? ` <span style="font-size:13px">📝</span>` : ""}</div>
         <div class="sub">${esc(intervalText(t))} · ${esc(st.text)}</div></div>
       <button class="btn small ghost" data-act="done" data-bike="${b.id}" data-task="${t.id}">Erledigt</button></div>`;
   }).join("") || `<p class="sub">Noch keine Wartungsarbeiten.</p>`;
@@ -422,6 +553,7 @@ function bikeDetail(id) {
   const total = logs.reduce((s, l) => s + (Number(l.cost) || 0), 0);
   const hist = logs.map((l) => `<div class="list-item row"><div class="grow"><div class="title" style="font-size:16px">${esc(l.taskName)}</div>
       <div class="sub">${fmt(l.date)}${l.km != null ? " · " + km(l.km) : ""}${l.cost ? " · " + Number(l.cost).toLocaleString("de-DE", { style: "currency", currency: "EUR" }) : ""}</div>
+      ${l.partChange ? `<div class="sub">🔄 ${esc(l.partChange.name)} gewechselt${l.partChange.label ? " (" + esc(l.partChange.label) + ")" : ""}${l.partChange.prev ? " · altes Teil hielt " + esc(lifetimeText(l.partChange.prev)) : ""}</div>` : ""}
       ${l.note ? `<div class="sub">${esc(l.note)}</div>` : ""}</div>
       <button class="link" style="color:var(--muted)" data-act="del-log" data-log="${l.id}" aria-label="Eintrag löschen">✕</button></div>`).join("") || `<p class="sub">Noch nichts eingetragen.</p>`;
   openSheet(sheetHead(b.name) + `
@@ -432,16 +564,29 @@ function bikeDetail(id) {
     </div>
     <h2>Wartungsplan</h2><div class="card">${tasks}</div>
     <button class="link" data-act="new-task" data-bike="${b.id}">+ Wartungsarbeit hinzufügen</button>
+    ${partsOverview(b)}
     <h2>Verlauf${total ? " · " + total.toLocaleString("de-DE", { style: "currency", currency: "EUR" }) + " gesamt" : ""}</h2><div class="card">${hist}</div>
     <button class="btn ghost block" data-act="edit-bike" data-bike="${b.id}">Rad bearbeiten</button>`);
+}
+
+/* Übersicht aller Verschleißteile eines Rads mit aktuellem Alter */
+function partsOverview(b) {
+  const names = [...new Set(b.tasks.map((t) => t.part).filter(Boolean))];
+  if (!names.length) return "";
+  return `<h2>Verschleißteile</h2><div class="card">${names.map((n) => {
+    const a = partAge(b, n), p = b.parts[n], t = b.tasks.find((x) => x.part === n);
+    return `<div class="list-item row" data-act="task" data-bike="${b.id}" data-task="${t.id}" style="cursor:pointer"><div style="font-size:20px">⏱️</div>
+      <div class="grow"><div class="title" style="font-size:16px">${esc(n)}${p && p.label ? ` <span class="sub">· ${esc(p.label)}</span>` : ""}</div>
+      <div class="sub">${a ? esc(a.text) + " im Einsatz" : "Alter unbekannt"}${p && p.history && p.history.length ? " · " + p.history.length + "× gewechselt" : ""}</div></div>
+      <span style="color:var(--muted);font-size:20px">›</span></div>`;
+  }).join("")}</div>`;
 }
 
 /* ---------- Formulare ---------- */
 function bikeForm(id) {
   const b = id ? bikeById(id) : null;
-  const tpl = !b ? `<label>Wartungsarbeiten übernehmen</label><div class="card" style="padding:4px 14px">${TEMPLATES.map((t, i) =>
-    `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("")}</div>
-    <p class="hint">Intervalle kannst du später pro Rad anpassen.</p>` : "";
+  const tpl = !b ? `<label id="tpl-label">Standard-Wartungsaufgaben</label><div class="card" style="padding:4px 14px" id="tpl-box"></div>
+    <p class="hint">Passend zur Art des Rads. Abwählen, was nicht gebraucht wird. Titel, Intervall und Notiz kannst du später ändern und eigene Aufgaben ergänzen.</p>` : "";
   openSheet(sheetHead(b ? "Rad bearbeiten" : "Neues Rad") + `
     <form id="f-bike">
       <label>Name</label><input name="name" required placeholder="z. B. Mein Trekkingrad" value="${esc(b?.name)}">
@@ -455,6 +600,15 @@ function bikeForm(id) {
       ${b ? `<button class="btn danger block" type="button" id="del-bike">Rad löschen</button>` : ""}
     </form>`);
   const f = document.getElementById("f-bike");
+  const fillTpl = () => {
+    const box = document.getElementById("tpl-box"); if (!box) return;
+    const type = f.elements.type.value;
+    document.getElementById("tpl-label").textContent = "Standard-Wartungsaufgaben für " + type;
+    box.innerHTML = templatesFor(type).map((t, i) =>
+      `<label class="chk"><input type="checkbox" name="tpl" value="${i}" checked><span class="grow">${esc(t.name)}<br><span class="sub">${esc(intervalText(t))}</span></span></label>`).join("");
+  };
+  fillTpl();
+  f.elements.type.addEventListener("change", fillTpl);
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
@@ -463,8 +617,9 @@ function bikeForm(id) {
       Object.assign(b, { name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim() });
       save(); bikeDetail(b.id); render(); toast("Gespeichert");
     } else {
-      const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), tasks: [] };
-      fd.getAll("tpl").forEach((i) => { const t = TEMPLATES[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, lastDate: null, lastKm: null }); });
+      const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), tasks: [], parts: {} };
+      const tpls = templatesFor(nb.type);
+      fd.getAll("tpl").forEach((i) => { const t = tpls[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note, part: t.part, lastDate: null, lastKm: null }); });
       state.bikes.push(nb); save(); closeSheet(); render(); toast("Rad angelegt");
     }
   });
@@ -476,30 +631,120 @@ function bikeForm(id) {
   });
 }
 
+/* Detailansicht einer Wartungsaufgabe: Intervall, Status, Notiz/Anleitung */
+function taskDetail(bikeId, taskId) {
+  const b = bikeById(bikeId); const t = b && b.tasks.find((x) => x.id === taskId); if (!t) return;
+  const st = status(b, t);
+  const label = { over: "Überfällig", soon: "Bald fällig", ok: "OK", new: "Noch nie eingetragen" }[st.level];
+  const done = state.log.filter((l) => l.taskId === t.id).sort((a, c) => c.date.localeCompare(a.date)).slice(0, 5);
+  openSheet(sheetHead(t.name) + `
+    <div class="sub">${esc(b.name)}${b.km != null ? " · Tacho " + km(b.km) : ""}</div>
+    <div class="card" style="margin-top:12px">
+      <div class="row"><div class="grow"><div class="sub">Intervall</div><div class="title" style="font-size:16px">${esc(intervalText(t))}</div></div>
+        <span class="pill ${st.level}">${label}</span></div>
+      <div class="sub" style="margin-top:8px">${t.lastDate ? "Zuletzt " + fmt(t.lastDate) + (t.lastKm != null ? " bei " + km(t.lastKm) : "") + " · " : ""}${esc(st.text)}${st.nextDate ? " (" + fmt(st.nextDate) + ")" : ""}</div>
+    </div>
+    ${t.part ? partCard(b, t.part) : ""}
+    <h2>Notiz & Anleitung</h2>
+    <div class="card" style="font-size:15px;line-height:1.5">${t.note ? linkify(t.note) : `<span class="sub">Noch keine Notiz. Unter „Bearbeiten" kannst du eine Anleitung oder einen YouTube-Link einfügen.</span>`}</div>
+    <a class="btn ghost block" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box" href="${ytSearch(t.name, b)}" target="_blank" rel="noopener">▶︎ Anleitung auf YouTube suchen</a>
+    ${done.length ? `<h2>Zuletzt erledigt</h2><div class="card">${done.map((l) => `<div class="list-item"><div class="title" style="font-size:15px">${fmt(l.date)}${l.km != null ? " · " + km(l.km) : ""}</div>${l.partChange ? `<div class="sub">🔄 ${esc(l.partChange.name)} gewechselt${l.partChange.label ? " (" + esc(l.partChange.label) + ")" : ""}</div>` : ""}${l.note ? `<div class="sub">${esc(l.note)}</div>` : ""}</div>`).join("")}</div>` : ""}
+    <div class="two" style="margin-top:8px">
+      <button class="btn ghost" data-act="edit-task" data-bike="${b.id}" data-task="${t.id}">Bearbeiten</button>
+      <button class="btn" data-act="done" data-bike="${b.id}" data-task="${t.id}">✓ Erledigt</button>
+    </div>`);
+}
+
+/* Karte mit Alter und Lebensdauer-Historie eines Verschleißteils */
+function partCard(b, name) {
+  const age = partAge(b, name);
+  const p = (b.parts || {})[name];
+  const hist = p?.history || [];
+  let avg = "";
+  if (hist.length > 1) {
+    const d = Math.round(hist.reduce((s, h) => s + h.days, 0) / hist.length);
+    const ks = hist.filter((h) => h.km != null);
+    avg = `<div class="sub" style="margin-top:6px">Ø Lebensdauer: <strong>${ageText(d)}${ks.length ? " · " + km(Math.round(ks.reduce((s, h) => s + h.km, 0) / ks.length)) : ""}</strong></div>`;
+  }
+  return `<h2>Verschleißteil: ${esc(name)}</h2><div class="card">
+    ${age ? `<div class="row"><div style="font-size:26px">⏱️</div><div class="grow"><div class="title" style="font-size:17px">${esc(age.text)}</div>
+        <div class="sub">im Einsatz${p.label ? " · " + esc(p.label) : ""} · eingebaut am ${fmt(p.installedDate)}${p.installedKm != null ? " bei " + km(p.installedKm) : ""}</div></div></div>`
+      : `<div class="sub">Alter noch unbekannt. Beim nächsten Wechsel unter „Erledigt" ankreuzen oder unter „Bearbeiten" das Einbaudatum eintragen.</div>`}
+    ${hist.length ? `<div class="sub" style="margin-top:12px;font-weight:600;color:var(--ink)">Frühere ${esc(name)}</div>` + hist.map((h) =>
+      `<div class="sub">${fmt(h.from)} – ${fmt(h.to)}: <strong>${esc(lifetimeText(h))}</strong>${h.label ? " · " + esc(h.label) : ""}</div>`).join("") + avg : ""}
+  </div>`;
+}
+
 function taskForm(bikeId, taskId) {
   const b = bikeById(bikeId); const t = taskId ? b.tasks.find((x) => x.id === taskId) : null;
-  const months = t && t.days && t.days % 30 === 0 ? t.days / 30 : null;
-  openSheet(sheetHead(t ? "Wartungsarbeit" : "Neue Wartungsarbeit") + `
+  const iv = splitDays(t?.days);
+  const p = t?.part ? (b.parts || {})[t.part] : null;
+  const unitOpt = (u, n) => `<option value="${u}" ${iv.u === u ? "selected" : ""}>${n}</option>`;
+  openSheet(sheetHead(t ? "Wartungsaufgabe bearbeiten" : "Neue Wartungsaufgabe") + `
+    <div class="sub">${esc(b.name)}</div>
     <form id="f-task">
-      <label>Was?</label><input name="name" required placeholder="z. B. Federgabel-Service" value="${esc(t?.name)}" list="tpl-names">
-      <datalist id="tpl-names">${TEMPLATES.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>
+      <label>Titel</label><input name="name" required placeholder="z. B. Federgabel-Service" value="${esc(t?.name)}" list="tpl-names">
+      <datalist id="tpl-names">${ALL_TEMPLATE_NAMES.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <label>Intervall</label>
       <div class="two">
-        <div><label>Alle … Tage</label><input name="days" type="number" inputmode="numeric" min="0" placeholder="z. B. 90" value="${t?.days || ""}"></div>
-        <div><label>und/oder alle … km</label><input name="km" type="number" inputmode="numeric" min="0" placeholder="z. B. 1000" value="${t?.km || ""}"></div>
+        <input name="every" type="number" inputmode="numeric" min="0" placeholder="z. B. 3" value="${iv.n}">
+        <select name="unit">${unitOpt("t", "Tage")}${unitOpt("w", "Wochen")}${unitOpt("m", "Monate")}${unitOpt("j", "Jahre")}</select>
       </div>
-      <p class="hint">Fällig ist, was zuerst erreicht wird. Tipp: 30 = monatlich, 365 = jährlich.${months ? " Aktuell: " + intervalText(t) + "." : ""}</p>
-      ${t ? `<label>Zuletzt gemacht</label><input name="lastDate" type="date" value="${t.lastDate || ""}">` : ""}
+      <label>und/oder alle … km</label>
+      <input name="km" type="number" inputmode="numeric" min="0" placeholder="optional, z. B. 1000" value="${t?.km || ""}">
+      <p class="hint">Fällig ist, was zuerst erreicht wird. Ein Feld darf leer bleiben.</p>
+      <label>Notiz / Anleitung</label>
+      <textarea name="note" rows="5" placeholder="Wie wird es gemacht? Welches Werkzeug, welche Teile?&#10;&#10;Links einfach einfügen, z. B. https://youtu.be/…">${esc(t?.note)}</textarea>
+      <p class="hint">Tipp: In YouTube auf <strong>Teilen → Kopieren</strong> tippen und den Link hier einfügen. Er wird später als Button angezeigt.</p>
+      ${t ? `<div class="two"><div><label>Zuletzt gemacht</label><input name="lastDate" type="date" value="${t.lastDate || ""}" max="${todayISO()}"></div>
+        <div><label>bei km</label><input name="lastKm" type="number" inputmode="numeric" min="0" placeholder="optional" value="${t.lastKm ?? ""}"></div></div>` : ""}
+      <h2 style="margin-top:26px">Verschleißteil (optional)</h2>
+      <input name="part" placeholder="z. B. Kette, Bremsbeläge vorne, Reifen hinten" value="${esc(t?.part)}" list="part-names">
+      <datalist id="part-names">${[...new Set([...Object.values(PART_OF), ...Object.keys(b.parts || {})])].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <p class="hint">Wird bei dieser Aufgabe ein Teil gewechselt, zählt die App sein Alter in Tagen und Kilometern. Aufgaben mit demselben Teil (z. B. „Kette ölen" und „Kette messen") teilen sich das Alter.</p>
+      <div id="part-fields">
+        <label>Aktuelles Teil (Marke/Modell)</label><input name="plabel" placeholder="optional, z. B. KMC X11" value="${esc(p?.label)}">
+        <div class="two">
+          <div><label>Eingebaut am</label><input name="pdate" type="date" max="${todayISO()}" value="${p?.installedDate || ""}"></div>
+          <div><label>bei km</label><input name="pkm" type="number" inputmode="numeric" min="0" placeholder="optional" value="${p?.installedKm ?? ""}"></div>
+        </div>
+      </div>
       <button class="btn block" type="submit">Speichern</button>
-      ${t ? `<button class="btn danger block" type="button" id="del-task">Wartungsarbeit entfernen</button>` : ""}
+      ${t ? `<button class="btn danger block" type="button" id="del-task">Wartungsaufgabe entfernen</button>` : ""}
     </form>`);
   const f = document.getElementById("f-task");
+  const togglePart = () => { document.getElementById("part-fields").style.display = f.elements.part.value.trim() ? "" : "none"; };
+  togglePart(); f.elements.part.addEventListener("input", togglePart);
+  // Wird ein bekannter Titel gewählt, Intervall, Notiz und Teil vorschlagen (nur wenn noch leer)
+  if (!t) f.elements.name.addEventListener("change", () => {
+    const k = Object.keys(T).find((key) => T[key][0] === f.elements.name.value);
+    if (!k) return;
+    const hit = T[k], s = splitDays(hit[1]);
+    if (!f.elements.every.value) { f.elements.every.value = s.n; f.elements.unit.value = s.u; }
+    if (!f.elements.km.value && hit[2]) f.elements.km.value = hit[2];
+    if (!f.elements.note.value) f.elements.note.value = hit[3];
+    if (!f.elements.part.value && PART_OF[k]) { f.elements.part.value = PART_OF[k]; togglePart(); }
+  });
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
-    const data = { name: fd.get("name").trim(), days: Number(fd.get("days")) || 0, km: Number(fd.get("km")) || 0 };
-    if (t) { Object.assign(t, data); if (fd.has("lastDate")) t.lastDate = fd.get("lastDate") || null; }
-    else b.tasks.push({ id: uid(), ...data, lastDate: null, lastKm: null });
-    save(); bikeDetail(b.id); render(); toast("Gespeichert");
+    const part = fd.get("part").trim();
+    const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part };
+    let id = t?.id;
+    if (t) {
+      Object.assign(t, data);
+      if (fd.has("lastDate")) t.lastDate = fd.get("lastDate") || null;
+      if (fd.has("lastKm")) t.lastKm = fd.get("lastKm") === "" ? null : Number(fd.get("lastKm"));
+    } else { id = uid(); b.tasks.push({ id, ...data, lastDate: null, lastKm: null }); }
+    if (part) {
+      b.parts = b.parts || {};
+      const cur = b.parts[part] || { installedDate: null, installedKm: null, label: "", history: [] };
+      cur.label = fd.get("plabel").trim();
+      if (fd.get("pdate")) cur.installedDate = fd.get("pdate");
+      cur.installedKm = fd.get("pkm") === "" ? (fd.get("pdate") ? null : cur.installedKm) : Number(fd.get("pkm"));
+      b.parts[part] = cur;
+    }
+    save(); render(); taskDetail(b.id, id); toast("Gespeichert");
   });
   if (t) document.getElementById("del-task").addEventListener("click", () => {
     if (!confirm(`„${t.name}" aus dem Wartungsplan entfernen? Der Verlauf bleibt erhalten.`)) return;
@@ -507,49 +752,98 @@ function taskForm(bikeId, taskId) {
   });
 }
 
+/* Gemeinsame Logik zum Abhaken (einzeln und mehrfach) */
+function markDone(b, task, name, date, kmVal, cost, note, swap) {
+  const entry = { id: uid(), bikeId: b.id, taskId: task ? task.id : null, taskName: name, date, km: kmVal, cost, note, created: new Date().toISOString() };
+  if (swap && task && task.part) {
+    const before = (b.parts || {})[task.part];
+    const changed = changePart(b, task.part, date, kmVal, swap.label);
+    if (changed !== false) entry.partChange = { name: task.part, label: swap.label || "", before: before ? { installedDate: before.installedDate, installedKm: before.installedKm, label: before.label || "" } : null, prev: changed };
+  }
+  state.log.push(entry);
+  if (task && (!task.lastDate || date >= task.lastDate)) { task.lastDate = date; task.lastKm = kmVal; }
+  if (kmVal != null && (b.km == null || kmVal > b.km)) b.km = kmVal;
+}
+
 function doneForm(bikeId, taskId) {
   const b = bikeById(bikeId); const t = taskId ? b.tasks.find((x) => x.id === taskId) : null;
+  const age = t && t.part ? partAge(b, t.part) : null;
   openSheet(sheetHead(t ? t.name : "Reparatur eintragen") + `
     <div class="sub">${esc(b.name)}</div>
+    ${t && t.note ? `<details class="card" style="margin-top:12px"><summary style="font-weight:600;cursor:pointer">📝 Anleitung anzeigen</summary><div style="margin-top:8px;font-size:15px;line-height:1.5">${linkify(t.note)}</div></details>` : ""}
     <form id="f-done">
       ${t ? "" : `<label>Was wurde gemacht?</label><input name="what" required placeholder="z. B. Schlauch hinten geflickt" list="tpl-names2"><datalist id="tpl-names2">${b.tasks.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>`}
+      <label>Kilometerstand heute</label>
+      <input name="km" type="number" inputmode="numeric" min="0" placeholder="Tacho ablesen (optional)" value="${b.km ?? ""}">
+      <p class="hint">${b.km != null ? "Zuletzt eingetragen: " + km(b.km) + ". " : ""}Damit werden kilometerabhängige Wartungen und das Alter der Verschleißteile berechnet.</p>
       <div class="two">
         <div><label>Datum</label><input name="date" type="date" required value="${todayISO()}" max="${todayISO()}"></div>
-        <div><label>Tachostand (km)</label><input name="km" type="number" inputmode="numeric" min="0" placeholder="optional" value="${b.km ?? ""}"></div>
-      </div>
-      <div class="two">
         <div><label>Kosten (€)</label><input name="cost" type="number" inputmode="decimal" step="0.01" min="0" placeholder="optional"></div>
-        <div></div>
       </div>
+      ${t && t.part ? `<div class="card" style="margin-top:16px">
+        <div class="sub">Verschleißteil <strong style="color:var(--ink)">${esc(t.part)}</strong>: ${age ? "im Einsatz seit " + esc(age.text) : "Alter bisher unbekannt"}</div>
+        <label class="chk" style="border:0;padding-bottom:0"><input type="checkbox" name="swap"><span>🔄 ${esc(t.part)} gewechselt – Alter ab heute auf 0</span></label>
+        <div id="swap-fields" style="display:none"><label>Neues Teil (Marke/Modell)</label><input name="plabel" placeholder="optional, z. B. Shimano B01S"></div>
+      </div>` : ""}
       <label>Notiz</label><textarea name="note" placeholder="z. B. Bremsbeläge vorne getauscht, Shimano B01S"></textarea>
       <button class="btn block" type="submit">✓ Eintragen</button>
     </form>`);
   const f = document.getElementById("f-done");
+  if (f.elements.swap) f.elements.swap.addEventListener("change", () => { document.getElementById("swap-fields").style.display = f.elements.swap.checked ? "" : "none"; });
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
-    const date = fd.get("date");
     const kmVal = fd.get("km") === "" ? null : Math.max(0, Number(fd.get("km")));
     const name = t ? t.name : fd.get("what").trim();
     // Freie Reparatur mit gleichem Namen wie eine Wartungsarbeit zählt auch als erledigt
     const task = t || b.tasks.find((x) => x.name.toLowerCase() === name.toLowerCase());
-    state.log.push({ id: uid(), bikeId: b.id, taskId: task ? task.id : null, taskName: name, date, km: kmVal, cost: fd.get("cost") ? Number(fd.get("cost")) : null, note: fd.get("note").trim(), created: new Date().toISOString() });
-    if (task && (!task.lastDate || date >= task.lastDate)) { task.lastDate = date; task.lastKm = kmVal; }
-    if (kmVal != null && (b.km == null || kmVal > b.km)) b.km = kmVal;
-    save(); closeSheet(); render(); toast("Eingetragen ✓");
+    const swap = fd.get("swap") ? { label: (fd.get("plabel") || "").trim() } : null;
+    markDone(b, task, name, fd.get("date"), kmVal, fd.get("cost") ? Number(fd.get("cost")) : null, fd.get("note").trim(), swap);
+    save(); closeSheet(); render(); toast(swap ? t.part + " gewechselt ✓" : "Eingetragen ✓");
+  });
+}
+
+/* Mehrere Aufgaben auf einmal abhaken */
+function bulkForm() {
+  const items = [...selected].map((k) => { const [bid, tid] = k.split("|"); const b = bikeById(bid); const t = b && b.tasks.find((x) => x.id === tid); return t ? { b, t } : null; }).filter(Boolean);
+  if (!items.length) { toast("Nichts ausgewählt"); return; }
+  const bikes = [...new Map(items.map((x) => [x.b.id, x.b])).values()];
+  openSheet(sheetHead(items.length + (items.length === 1 ? " Aufgabe" : " Aufgaben") + " abhaken") + `
+    <form id="f-bulk">
+      <div class="card" style="padding:4px 14px;margin-top:6px">${items.map(({ b, t }, i) => `<div class="list-item">
+        <div class="title" style="font-size:16px">✓ ${esc(t.name)}</div><div class="sub">${esc(b.name)}</div>
+        ${t.part ? `<label class="chk" style="border:0;padding:6px 0 0;font-size:15px"><input type="checkbox" name="swap" value="${i}"><span>🔄 ${esc(t.part)} gewechselt</span></label>` : ""}</div>`).join("")}</div>
+      ${bikes.map((b) => `<label>Kilometerstand heute${bikes.length > 1 ? " – " + esc(b.name) : ""}</label><input name="km-${b.id}" type="number" inputmode="numeric" min="0" placeholder="Tacho ablesen (optional)" value="${b.km ?? ""}">`).join("")}
+      <label>Datum</label><input name="date" type="date" required value="${todayISO()}" max="${todayISO()}">
+      <label>Notiz für alle</label><textarea name="note" placeholder="z. B. Frühjahrs-Check"></textarea>
+      <button class="btn block" type="submit">✓ Alle eintragen</button>
+    </form>`);
+  const f = document.getElementById("f-bulk");
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const swaps = new Set(fd.getAll("swap").map(Number));
+    items.forEach(({ b, t }, i) => {
+      const v = fd.get("km-" + b.id);
+      markDone(b, t, t.name, fd.get("date"), v === "" ? null : Math.max(0, Number(v)), null, fd.get("note").trim(), swaps.has(i) ? { label: "" } : null);
+    });
+    selected.clear(); selMode = false;
+    save(); closeSheet(); render(); toast(items.length + " eingetragen ✓");
   });
 }
 
 function kmForm(bikeId) {
   const b = bikeById(bikeId);
-  openSheet(sheetHead("Tachostand") + `<div class="sub">${esc(b.name)}</div>
-    <form id="f-km"><label>Aktueller Kilometerstand</label>
-      <input name="km" type="number" inputmode="numeric" min="0" required value="${b.km ?? ""}" autofocus>
-      <p class="hint">Damit werden kilometerabhängige Wartungen (z. B. Kette) berechnet.</p>
+  openSheet(sheetHead("Kilometerstand") + `<div class="sub">${esc(b.name)}</div>
+    <form id="f-km"><label>Aktueller Kilometerstand (Tacho)</label>
+      <input name="km" type="number" inputmode="numeric" min="0" required value="${b.km ?? ""}">
+      <p class="hint">Damit werden kilometerabhängige Wartungen und das Alter der Verschleißteile berechnet.</p>
       <button class="btn block" type="submit">Speichern</button></form>`);
   const f = document.getElementById("f-km");
   f.addEventListener("submit", (e) => {
-    e.preventDefault(); b.km = Math.max(0, Number(new FormData(f).get("km"))); save(); bikeDetail(b.id); render(); toast("Tachostand gespeichert");
+    e.preventDefault(); b.km = Math.max(0, Number(new FormData(f).get("km"))); save();
+    if (tab === "bikes") bikeDetail(b.id); else closeSheet();
+    render(); toast("Kilometerstand gespeichert");
   });
 }
 
@@ -557,8 +851,18 @@ function delLog(id) {
   const l = state.log.find((x) => x.id === id); if (!l) return;
   if (!confirm(`Eintrag „${l.taskName}" vom ${fmt(l.date)} löschen?`)) return;
   state.log = state.log.filter((x) => x.id !== id);
-  // letztes Datum der Aufgabe neu bestimmen
   const b = bikeById(l.bikeId);
+  // Teilewechsel rückgängig machen, wenn danach kein neuerer Wechsel kam
+  if (b && l.partChange) {
+    const cur = (b.parts || {})[l.partChange.name];
+    if (cur && cur.installedDate === l.date) {
+      const hist = cur.history || [];
+      if (l.partChange.prev) hist.shift();
+      if (l.partChange.before) b.parts[l.partChange.name] = { ...l.partChange.before, history: hist };
+      else b.parts[l.partChange.name] = { installedDate: null, installedKm: null, label: "", history: hist };
+    }
+  }
+  // letztes Datum der Aufgabe neu bestimmen
   const t = b && b.tasks.find((x) => x.id === l.taskId);
   if (t) {
     const prev = state.log.filter((x) => x.taskId === t.id).sort((a, c) => c.date.localeCompare(a.date))[0];
@@ -632,7 +936,7 @@ document.getElementById("file-in").addEventListener("change", (e) => {
       if (state.bikes.length && !confirm(`Sicherung mit ${info} laden?\n\nDie aktuellen Daten auf diesem Gerät werden ersetzt.`)) return;
       d.meta = d.meta || {};
       d.meta.lastChange = d.meta.lastBackup || new Date().toISOString();
-      state = d; save(false); tab = "due"; render(); toast("Sicherung geladen");
+      state = migrate(d); save(false); tab = "due"; render(); toast("Sicherung geladen");
     } catch (err) { alert("Diese Datei ist keine gültige Rad-Wartung-Sicherung."); }
   };
   r.readAsText(file);

@@ -563,7 +563,7 @@ function bikeDetail(id) {
       <button class="btn ghost" data-act="free-work" data-bike="${b.id}">+ Reparatur</button>
     </div>
     <h2>Wartungsplan</h2><div class="card">${tasks}</div>
-    <button class="link" data-act="new-task" data-bike="${b.id}">+ Wartungsarbeit hinzufügen</button>
+    <button class="btn ghost block" data-act="new-task" data-bike="${b.id}" style="margin-top:0">+ Eigene Wartungsaufgabe hinzufügen</button>
     ${partsOverview(b)}
     <h2>Verlauf${total ? " · " + total.toLocaleString("de-DE", { style: "currency", currency: "EUR" }) + " gesamt" : ""}</h2><div class="card">${hist}</div>
     <button class="btn ghost block" data-act="edit-bike" data-bike="${b.id}">Rad bearbeiten</button>`);
@@ -586,7 +586,11 @@ function partsOverview(b) {
 function bikeForm(id) {
   const b = id ? bikeById(id) : null;
   const tpl = !b ? `<label id="tpl-label">Standard-Wartungsaufgaben</label><div class="card" style="padding:4px 14px" id="tpl-box"></div>
-    <p class="hint">Passend zur Art des Rads. Abwählen, was nicht gebraucht wird. Titel, Intervall und Notiz kannst du später ändern und eigene Aufgaben ergänzen.</p>` : "";
+    <p class="hint">Passend zur Art des Rads. Abwählen, was nicht gebraucht wird.</p>
+    <label>Eigene Wartungsaufgaben</label>
+    <div id="custom-box"></div>
+    <button class="btn ghost block" type="button" id="add-custom" style="margin-top:0">+ Eigene Wartungsaufgabe hinzufügen</button>
+    <p class="hint">Titel, Intervall (Zeit und/oder km), Notiz oder YouTube-Link. Alles lässt sich später ändern.</p>` : "";
   openSheet(sheetHead(b ? "Rad bearbeiten" : "Neues Rad") + `
     <form id="f-bike">
       <label>Name</label><input name="name" required placeholder="z. B. Mein Trekkingrad" value="${esc(b?.name)}">
@@ -609,6 +613,36 @@ function bikeForm(id) {
   };
   fillTpl();
   f.elements.type.addEventListener("change", fillTpl);
+  // Eigene Aufgaben direkt beim Anlegen
+  const addCustom = () => {
+    const div = document.createElement("div");
+    div.className = "card custom-task";
+    div.innerHTML = `<div class="row"><strong class="grow">Eigene Aufgabe</strong><button type="button" class="link" style="color:var(--muted)" aria-label="Entfernen">✕ entfernen</button></div>
+      <label>Titel</label><input class="c-name" placeholder="z. B. Federgabel-Service" list="tpl-names-c">
+      <label>Intervall</label>
+      <div class="two"><input class="c-every" type="number" inputmode="numeric" min="0" placeholder="z. B. 6">
+        <select class="c-unit"><option value="t">Tage</option><option value="w">Wochen</option><option value="m" selected>Monate</option><option value="j">Jahre</option></select></div>
+      <label>und/oder alle … km</label><input class="c-km" type="number" inputmode="numeric" min="0" placeholder="optional, z. B. 1000">
+      <label>Notiz / Anleitung</label><textarea class="c-note" rows="3" placeholder="Wie wird es gemacht? Oder YouTube-Link einfügen"></textarea>
+      <label>Verschleißteil (optional)</label><input class="c-part" placeholder="z. B. Kassette" list="part-names-c">`;
+    div.querySelector("button").addEventListener("click", () => div.remove());
+    const nameIn = div.querySelector(".c-name");
+    nameIn.addEventListener("change", () => {   // bekannter Titel → Werte vorschlagen
+      const k = Object.keys(T).find((key) => T[key][0] === nameIn.value); if (!k) return;
+      const s = splitDays(T[k][1]);
+      if (!div.querySelector(".c-every").value) { div.querySelector(".c-every").value = s.n; div.querySelector(".c-unit").value = s.u; }
+      if (!div.querySelector(".c-km").value && T[k][2]) div.querySelector(".c-km").value = T[k][2];
+      if (!div.querySelector(".c-note").value) div.querySelector(".c-note").value = T[k][3];
+      if (!div.querySelector(".c-part").value && PART_OF[k]) div.querySelector(".c-part").value = PART_OF[k];
+    });
+    document.getElementById("custom-box").appendChild(div);
+    nameIn.focus();
+  };
+  if (!b) {
+    f.insertAdjacentHTML("beforeend", `<datalist id="tpl-names-c">${ALL_TEMPLATE_NAMES.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <datalist id="part-names-c">${[...new Set(Object.values(PART_OF))].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>`);
+    document.getElementById("add-custom").addEventListener("click", addCustom);
+  }
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const fd = new FormData(f);
@@ -620,7 +654,15 @@ function bikeForm(id) {
       const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), tasks: [], parts: {} };
       const tpls = templatesFor(nb.type);
       fd.getAll("tpl").forEach((i) => { const t = tpls[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note, part: t.part, lastDate: null, lastKm: null }); });
-      state.bikes.push(nb); save(); closeSheet(); render(); toast("Rad angelegt");
+      let custom = 0;
+      f.querySelectorAll(".custom-task").forEach((c) => {
+        const name = c.querySelector(".c-name").value.trim(); if (!name) return;
+        nb.tasks.push({ id: uid(), name, days: (Number(c.querySelector(".c-every").value) || 0) * UNIT[c.querySelector(".c-unit").value],
+          km: Number(c.querySelector(".c-km").value) || 0, note: c.querySelector(".c-note").value.trim(), part: c.querySelector(".c-part").value.trim(), lastDate: null, lastKm: null });
+        custom++;
+      });
+      state.bikes.push(nb); save(); render(); bikeDetail(nb.id);
+      toast("Rad angelegt" + (custom ? " · " + custom + " eigene Aufgabe" + (custom > 1 ? "n" : "") : ""));
     }
   });
   if (b) document.getElementById("del-bike").addEventListener("click", () => {
@@ -971,7 +1013,10 @@ async function exportICS() {
 /* ---------- Start ---------- */
 render();
 if ("serviceWorker" in navigator && location.protocol === "https:") {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  // Bei jedem Öffnen nach einer neuen Version schauen und sie sofort aktivieren
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (!reloaded && !document.querySelector(".sheet.open")) { reloaded = true; location.reload(); } });
 }
 </script>
 </body>

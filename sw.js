@@ -1,5 +1,6 @@
 // Service Worker: sorgt dafür, dass die App auch ohne Internet startet.
-const CACHE = "rad-wartung-v3";
+const CACHE = "rad-wartung-v4";
+// Version hochzählen, wenn sich etwas ändert
 const FILES = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
@@ -16,9 +17,9 @@ self.addEventListener("activate", (e) => {
 
 // Erst Netz (damit Updates ankommen), sonst Cache.
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
+  if (e.request.method !== "GET" || !e.request.url.startsWith(self.location.origin)) return;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request.url, { cache: "no-cache" })   // immer beim Server nach der neuesten Version fragen
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));

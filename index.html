@@ -133,6 +133,11 @@
   .card.picked .tick { background: var(--brand); border-color: var(--brand); }
   .selbar { position: fixed; left: 12px; right: 12px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 9; max-width: 616px; margin: 0 auto;
     display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 10px 10px 16px; box-shadow: 0 6px 24px rgba(0,0,0,.15); }
+  .thumb { width: 56px; height: 56px; border-radius: 12px; overflow: hidden; background: var(--brand-soft); display: flex; align-items: center; justify-content: center; font-size: 28px; flex: none; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.sm { width: 40px; height: 40px; font-size: 20px; border-radius: 10px; }
+  .thumb.lg { width: 92px; height: 92px; font-size: 42px; border-radius: 16px; }
+  .cover { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius); display: block; margin: 6px 0 4px; }
   ol.steps { padding-left: 20px; margin: 6px 0; font-size: 15px; } ol.steps li { margin: 4px 0; }
 </style>
 </head>
@@ -306,7 +311,7 @@ function migrate(d) { d.meta = d.meta || {}; d.bikes.forEach((b) => { b.parts = 
 function save(changed = true) {
   if (changed) state.meta.lastChange = new Date().toISOString();
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
-  catch (e) { toast("Speichern fehlgeschlagen"); }
+  catch (e) { toast("Speichern fehlgeschlagen – Speicher voll? Evtl. ein Foto entfernen."); }
 }
 
 /* ---------- Hilfen ---------- */
@@ -449,9 +454,9 @@ function taskCard(x) {
       ${age ? `<div class="sub">⏱️ ${esc(task.part)}: ${esc(age.text)} alt</div>` : ""}
       <div class="sub" style="margin-top:4px"><span class="pill ${st.level}">${label}</span> ${task.lastDate ? "zuletzt " + fmt(task.lastDate) + (task.lastKm != null ? " · " + km(task.lastKm) : "") : ""}</div>`;
   if (selMode) return `<div class="card row ${on ? "picked" : ""}" data-act="sel" data-key="${key}" style="cursor:pointer">
-      <span class="tick">${on ? "✓" : ""}</span><div class="grow">${info}</div></div>`;
+      <span class="tick">${on ? "✓" : ""}</span>${bike.photo && state.bikes.length > 1 ? bikeThumb(bike, "sm") : ""}<div class="grow">${info}</div></div>`;
   return `<div class="card row">
-    <div class="bar ${st.level}"></div>
+    <div class="bar ${st.level}"></div>${bike.photo && state.bikes.length > 1 ? bikeThumb(bike, "sm") : ""}
     <div class="grow" data-act="task" data-bike="${bike.id}" data-task="${task.id}" style="cursor:pointer">${info}</div>
     <button class="btn small" data-act="done" data-bike="${bike.id}" data-task="${task.id}">Erledigt</button>
   </div>`;
@@ -538,6 +543,28 @@ function renderCal() {
     <p class="hint">Legt die nächsten Wartungstermine mit Erinnerung um 9 Uhr im Kalender an. Der iPhone-Kalender synchronisiert sie über iCloud auf alle Geräte.</p>`;
 }
 
+/* ---------- Fotos ---------- */
+function bikeThumb(b, size = "") {
+  return `<div class="thumb ${size}">${b.photo ? `<img src="${b.photo}" alt="">` : "🚲"}</div>`;
+}
+/* Foto verkleinern (max. 800 px, JPEG), damit der Speicher reicht */
+function shrinkImage(file, max = 800, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Bild")); };
+    img.src = url;
+  });
+}
+
 /* ---------- Ansicht: Räder ---------- */
 function renderBikes() {
   setHeader("Räder", state.bikes.length ? state.bikes.length + (state.bikes.length === 1 ? " Rad" : " Räder") : "");
@@ -546,7 +573,7 @@ function renderBikes() {
     const o = st.filter((l) => l === "over").length, s = st.filter((l) => l === "soon").length;
     const last = state.log.filter((l) => l.bikeId === b.id).sort((a, c) => c.date.localeCompare(a.date))[0];
     return `<div class="card row" data-act="open-bike" data-bike="${b.id}" style="cursor:pointer">
-      <div style="font-size:30px">🚲</div>
+      ${bikeThumb(b)}
       <div class="grow"><div class="title">${esc(b.name)}</div>
         <div class="sub">${esc(b.type || "")}${b.km != null ? " · " + km(b.km) : ""}</div>
         <div class="sub" style="margin-top:4px">${o ? `<span class="pill over">${o} überfällig</span> ` : ""}${s ? `<span class="pill soon">${s} bald</span> ` : ""}${!o && !s ? `<span class="pill ok">alles ok</span> ` : ""}${last ? "zuletzt " + fmtShort(last.date) : ""}</div></div>
@@ -579,6 +606,7 @@ function bikeDetail(id) {
       ${l.note ? `<div class="sub">${esc(l.note)}</div>` : ""}</div>
       <button class="link" style="color:var(--muted)" data-act="del-log" data-log="${l.id}" aria-label="Eintrag löschen">✕</button></div>`).join("") || `<p class="sub">Noch nichts eingetragen.</p>`;
   openSheet(sheetHead(b.name) + `
+    ${b.photo ? `<img class="cover" src="${b.photo}" alt="Foto von ${esc(b.name)}" data-act="edit-bike" data-bike="${b.id}">` : `<button class="link" data-act="edit-bike" data-bike="${b.id}">📷 Foto hinzufügen</button>`}
     <div class="sub">${esc(b.type || "")}${b.notes ? " · " + esc(b.notes) : ""}</div>
     <div class="two" style="margin-top:12px">
       <button class="btn ghost" data-act="km" data-bike="${b.id}">Tacho: ${b.km != null ? km(b.km) : "–"}</button>
@@ -607,6 +635,7 @@ function partsOverview(b) {
 /* ---------- Eigene Standard-Aufgaben je Radtyp ---------- */
 let tplType = null;
 /* Beim ersten Bearbeiten werden die Vorschläge in die eigenen Daten kopiert */
+const hasTpl = (type, name) => templatesFor(type).some((x) => x.name.toLowerCase() === String(name).toLowerCase());
 function tplStore() {
   if (!state.templates) {
     state.templates = {};
@@ -627,7 +656,7 @@ function tplManager(type) {
     <div class="card">${list.map((t, i) => `<div class="list-item row">
         <div class="grow" data-act="tpl-edit" data-i="${i}" style="cursor:pointer">
           <div class="title" style="font-size:16px">${esc(t.name)}${t.note ? ` <span style="font-size:13px">📝</span>` : ""}</div>
-          <div class="sub">${esc(intervalText(t))}${t.part ? " · ⏱️ " + esc(t.part) : ""}</div></div>
+          <div class="sub">${esc(intervalText(t))}${t.part ? " · ⏱️ " + esc(t.part) : ""}${(() => { const n = bikeTypes().filter((ty) => ty !== tplType && hasTpl(ty, t.name)).length; return n ? ` · auch in ${n} ${n === 1 ? "weiterem Typ" : "weiteren Typen"}` : ""; })()}</div></div>
         <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="-1" aria-label="nach oben" ${i ? "" : "disabled"}>↑</button>
         <button class="link" style="color:var(--muted);padding:4px 6px" data-act="tpl-move" data-i="${i}" data-dir="1" aria-label="nach unten" ${i < list.length - 1 ? "" : "disabled"}>↓</button>
       </div>`).join("") || `<p class="sub">Noch keine Standard-Aufgaben für diesen Radtyp.</p>`}</div>
@@ -655,6 +684,12 @@ function tplTaskForm(i) {
       <label>Notiz / Anleitung</label><textarea name="note" rows="5" placeholder="Wie wird es gemacht? Oder YouTube-Link einfügen">${esc(t?.note)}</textarea>
       <label>Verschleißteil (optional)</label><input name="part" placeholder="z. B. Kette" value="${esc(t?.part)}" list="part-names-t">
       <datalist id="part-names-t">${[...new Set(Object.values(PART_OF))].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <label>Gilt für diese Radtypen</label>
+      <div class="card" style="padding:4px 14px">${bikeTypes().map((ty) => {
+        const cur = ty === tplType, has = !isNew && hasTpl(ty, t.name);
+        return `<label class="chk"><input type="checkbox" name="types" value="${esc(ty)}" ${cur || has ? "checked" : ""} ${cur ? "disabled" : ""}><span class="grow">${esc(ty)}${cur ? ` <span class="sub">(dieser Typ)</span>` : ""}</span></label>`;
+      }).join("")}</div>
+      <p class="hint">Haken setzen, um die Aufgabe auch zu anderen Radtypen hinzuzufügen. Änderungen gelten für alle angehakten Typen, ein entfernter Haken nimmt sie dort wieder heraus.</p>
       <button class="btn block" type="submit">Speichern</button>
       ${isNew ? "" : `<button class="btn danger block" type="button" id="del-tpl">Aus den Standard-Aufgaben entfernen</button>`}
       <button class="btn ghost block" type="button" data-act="tpl-back">Zurück</button>
@@ -672,9 +707,18 @@ function tplTaskForm(i) {
     e.preventDefault();
     const fd = new FormData(f);
     const data = { name: fd.get("name").trim(), days: (Number(fd.get("every")) || 0) * UNIT[fd.get("unit")], km: Number(fd.get("km")) || 0, note: fd.get("note").trim(), part: fd.get("part").trim() };
-    const list = tplStore()[tplType];
-    if (isNew) list.push({ id: uid(), ...data }); else Object.assign(list[i], data);
-    save(); tplManager(tplType); toast("Gespeichert");
+    const store = tplStore();
+    const oldName = (t ? t.name : data.name).toLowerCase();
+    const checked = new Set([tplType, ...fd.getAll("types")]);
+    Object.keys(store).forEach((ty) => {
+      const list = store[ty];
+      if (ty === tplType) { if (isNew) list.push({ id: uid(), ...data }); else Object.assign(list[i], data); return; }
+      let idx = list.findIndex((x) => x.name.toLowerCase() === oldName);
+      if (idx < 0 && checked.has(ty)) idx = list.findIndex((x) => x.name.toLowerCase() === data.name.toLowerCase());
+      if (checked.has(ty)) { if (idx >= 0) Object.assign(list[idx], data); else list.push({ id: uid(), ...data }); }
+      else if (!isNew && idx >= 0) list.splice(idx, 1);
+    });
+    save(); tplManager(tplType); toast(checked.size > 1 ? "Gespeichert für " + checked.size + " Radtypen" : "Gespeichert");
   });
   if (!isNew) document.getElementById("del-tpl").addEventListener("click", () => {
     if (!confirm(`„${t.name}" aus den Standard-Aufgaben für ${tplType} entfernen?`)) return;
@@ -730,6 +774,11 @@ function bikeForm(id) {
         <div><label>Tachostand (km)</label><input name="km" type="number" inputmode="numeric" min="0" placeholder="optional" value="${b?.km ?? ""}"></div>
       </div>
       <label>Notiz</label><input name="notes" placeholder="z. B. Reifengröße 28 × 1,6" value="${esc(b?.notes)}">
+      <label>Foto</label>
+      <div class="row"><div class="thumb lg" id="ph-prev">${b?.photo ? `<img src="${b.photo}" alt="">` : "🚲"}</div>
+        <div class="grow"><button type="button" class="btn ghost small" id="ph-pick">📷 ${b?.photo ? "Foto ändern" : "Foto hinzufügen"}</button><br>
+          <button type="button" class="link" id="ph-del" style="color:var(--red);font-size:14px;${b?.photo ? "" : "display:none"}">Foto entfernen</button></div></div>
+      <input type="file" id="ph-in" accept="image/*" hidden>
       ${tpl}
       <button class="btn block" type="submit">Speichern</button>
       ${b ? `<button class="btn danger block" type="button" id="del-bike">Rad löschen</button>` : ""}
@@ -744,6 +793,21 @@ function bikeForm(id) {
   };
   fillTpl();
   f.elements.type.addEventListener("change", fillTpl);
+  // Foto: wird verkleinert und mit den Daten gespeichert
+  let photo = b?.photo || null;
+  const phIn = document.getElementById("ph-in");
+  const showPhoto = () => {
+    document.getElementById("ph-prev").innerHTML = photo ? `<img src="${photo}" alt="">` : "🚲";
+    document.getElementById("ph-pick").textContent = "📷 " + (photo ? "Foto ändern" : "Foto hinzufügen");
+    document.getElementById("ph-del").style.display = photo ? "" : "none";
+  };
+  document.getElementById("ph-pick").addEventListener("click", () => phIn.click());
+  document.getElementById("ph-del").addEventListener("click", () => { photo = null; showPhoto(); });
+  phIn.addEventListener("change", async () => {
+    const file = phIn.files[0]; phIn.value = ""; if (!file) return;
+    try { photo = await shrinkImage(file); showPhoto(); }
+    catch (err) { toast("Foto konnte nicht geladen werden"); }
+  });
   // Eigene Aufgaben direkt beim Anlegen
   const addCustom = () => {
     const div = document.createElement("div");
@@ -779,10 +843,10 @@ function bikeForm(id) {
     const fd = new FormData(f);
     const kmVal = fd.get("km") === "" ? null : Math.max(0, Number(fd.get("km")));
     if (b) {
-      Object.assign(b, { name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim() });
+      Object.assign(b, { name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), photo });
       save(); bikeDetail(b.id); render(); toast("Gespeichert");
     } else {
-      const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), tasks: [], parts: {} };
+      const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), photo, tasks: [], parts: {} };
       const tpls = templatesFor(nb.type);
       fd.getAll("tpl").forEach((i) => { const t = tpls[i]; nb.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note, part: t.part, lastDate: null, lastKm: null }); });
       let custom = 0;
@@ -1053,13 +1117,14 @@ function renderMore() {
   view.innerHTML = `
     <div class="card">
       <div class="title">In iCloud Drive sichern</div>
-      <p class="sub">Erstellt eine Sicherungsdatei. Im folgenden Fenster <strong>„In Dateien sichern"</strong> wählen, dann <strong>iCloud Drive</strong> und am besten immer denselben Ordner, z. B. „Rad-Wartung". Vorhandene Datei ersetzen.</p>
-      <button class="btn block" data-act="export">☁️ Jetzt sichern</button>
+      <p class="sub">Im folgenden Fenster <strong>„In Dateien sichern"</strong> wählen und immer denselben Ordner in <strong>iCloud Drive</strong> nehmen, z. B. „Rad-Wartung". Es wechseln sich ${BACKUP_SLOTS} Dateien ab: So bleiben die letzten ${BACKUP_SLOTS} Sicherungen erhalten, und die älteste wird überschrieben. Fragt iOS nach, auf <strong>„Ersetzen“</strong> tippen.</p>
+      <button class="btn block" data-act="export">☁️ Jetzt sichern${state.bikes.length ? ` <span style="font-weight:400;opacity:.8">(als Nr. ${((m.backupSlot || 0) % BACKUP_SLOTS) + 1})</span>` : ""}</button>
       <p class="hint">Letzte Sicherung: ${m.lastBackup ? new Date(m.lastBackup).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : "noch nie"}${m.lastChange && (!m.lastBackup || m.lastBackup < m.lastChange) ? " · <span style='color:var(--amber)'>seitdem geändert</span>" : ""}</p>
+      ${backupList()}
     </div>
     <div class="card">
       <div class="title">Aus iCloud Drive laden</div>
-      <p class="sub">Auf einem anderen Gerät (iPad, Mac) die Sicherungsdatei aus iCloud Drive auswählen. Die Daten auf diesem Gerät werden dabei ersetzt.</p>
+      <p class="sub">Auf einem anderen Gerät (iPad, Mac) eine Sicherungsdatei aus iCloud Drive auswählen, normalerweise die neueste. Ältere Dateien helfen, wenn mal etwas versehentlich gelöscht wurde. Die Daten auf diesem Gerät werden dabei ersetzt.</p>
       <button class="btn ghost block" data-act="import">Sicherung laden…</button>
     </div>
     <div class="card">
@@ -1090,13 +1155,28 @@ async function shareOrDownload(blob, filename, title) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   return true;
 }
+/* Rotierende Sicherung: 5 Dateien wechseln sich ab, die älteste wird überschrieben */
+const BACKUP_SLOTS = 5;
+const backupName = (slot) => `Rad-Wartung-Sicherung-${slot}.json`;
 async function exportData() {
-  const prev = state.meta.lastBackup;
-  state.meta.lastBackup = new Date().toISOString();
+  const m = state.meta;
+  const prev = { lastBackup: m.lastBackup, backupSlot: m.backupSlot, backups: m.backups };
+  const slot = ((m.backupSlot || 0) % BACKUP_SLOTS) + 1;
+  const now = new Date().toISOString();
+  m.lastBackup = now; m.backupSlot = slot;
+  m.backups = [{ slot, time: now }, ...(m.backups || []).filter((x) => x.slot !== slot)].slice(0, BACKUP_SLOTS);
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-  const ok = await shareOrDownload(blob, "Rad-Wartung-Sicherung.json", "Rad-Wartung Sicherung");
-  if (ok) { save(false); toast("Sicherung erstellt"); } else state.meta.lastBackup = prev;
+  const ok = await shareOrDownload(blob, backupName(slot), "Rad-Wartung Sicherung " + slot);
+  if (ok) { save(false); toast("Gesichert als Nr. " + slot); } else Object.assign(m, prev);
   render();
+}
+function backupList() {
+  const list = (state.meta.backups || []).slice().sort((a, b) => b.time.localeCompare(a.time));
+  if (!list.length) return "";
+  return `<div style="margin-top:12px">${list.map((x, i) => `<div class="row sub" style="padding:4px 0">
+      <span class="grow">${i === 0 ? "<strong style='color:var(--ink)'>" : ""}${backupName(x.slot)}${i === 0 ? "</strong>" : ""}</span>
+      <span>${new Date(x.time).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</span>
+      ${i === 0 ? `<span class="pill ok">neueste</span>` : ""}</div>`).join("")}</div>`;
 }
 document.getElementById("file-in").addEventListener("change", (e) => {
   const file = e.target.files[0]; e.target.value = "";

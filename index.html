@@ -61,6 +61,8 @@
   .btn.small { padding: 8px 12px; font-size: 14px; }
   .btn.ghost { background: var(--brand-soft); color: var(--brand); }
   .btn.danger { background: var(--red-soft); color: var(--red); }
+  .btn.is-open { background: var(--red); color: #fff; min-width: 96px; }
+  .btn.is-done { background: var(--green); color: #fff; min-width: 96px; }
   .btn.block { width: 100%; padding: 14px; font-size: 17px; margin-top: 8px; }
   button:disabled { opacity: .3; cursor: default; }
   .link { background: none; color: var(--brand); padding: 4px 0; font-weight: 600; }
@@ -388,7 +390,8 @@ function status(bike, t) {
   if (t.days) { out.nextDate = addDays(t.lastDate, t.days); out.daysLeft = diffDays(todayISO(), out.nextDate); }
   if (t.km && bike.km != null && t.lastKm != null) out.kmLeft = (t.lastKm + t.km) - bike.km;
   const over = (out.daysLeft != null && out.daysLeft < 0) || (out.kmLeft != null && out.kmLeft <= 0);
-  const soon = (out.daysLeft != null && out.daysLeft <= 7) || (out.kmLeft != null && out.kmLeft <= 100);
+  // "bald fällig": höchstens 7 Tage / 100 km vorher, bei kurzen Intervallen höchstens ein Viertel davon
+  const soon = (out.daysLeft != null && out.daysLeft <= Math.min(7, Math.floor(t.days / 4))) || (out.kmLeft != null && out.kmLeft <= Math.min(100, t.km / 4));
   out.level = over ? "over" : soon ? "soon" : "ok";
   const parts = [];
   if (out.daysLeft != null) {
@@ -409,7 +412,7 @@ function allTasks() {
 const view = document.getElementById("view");
 document.getElementById("tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-tab]"); if (!b) return;
-  tab = b.dataset.tab; selMode = false; selected.clear(); render(); window.scrollTo(0, 0);
+  tab = b.dataset.tab; selMode = false; selected.clear(); closeSheet(); render(); window.scrollTo(0, 0);
 });
 function setHeader(t, s) { document.getElementById("h-title").textContent = t; document.getElementById("h-sub").textContent = s || ""; }
 function render() {
@@ -423,16 +426,28 @@ function toast(msg) {
   const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
+/* Merkt sich, aus welchem Rad heraus gearbeitet wird, damit man dorthin zurückkehrt */
+let ctxBike = null, sheetIsBike = false, bikeScroll = 0;
+const catOpen = {};   // "radId|Kategorie" → aufgeklappt ja/nein
 function openSheet(html) {
+  const sheet = document.getElementById("sheet");
+  if (sheetIsBike) {   // Zustand der Rad-Ansicht sichern, bevor sie ersetzt wird
+    bikeScroll = sheet.scrollTop;
+    sheet.querySelectorAll("details.cat[data-key]").forEach((d) => { catOpen[d.dataset.key] = d.open; });
+  }
+  sheetIsBike = false;
   document.getElementById("sheet-body").innerHTML = html;
+  sheet.scrollTop = 0;
   document.getElementById("backdrop").classList.add("open");
   document.getElementById("sheet").classList.add("open");
 }
 function closeSheet() {
+  ctxBike = null; sheetIsBike = false;
   document.getElementById("backdrop").classList.remove("open");
   document.getElementById("sheet").classList.remove("open");
 }
 document.getElementById("backdrop").addEventListener("click", closeSheet);
+document.addEventListener("toggle", (e) => { const d = e.target; if (d.matches && d.matches("details.cat[data-key]")) catOpen[d.dataset.key] = d.open; }, true);
 function sheetHead(title) { return `<div class="sheet-head"><h3>${esc(title)}</h3><button class="link" data-act="close">Schließen</button></div>`; }
 
 /* Zentrale Klick-Behandlung über data-act */
@@ -450,6 +465,8 @@ document.addEventListener("click", (e) => {
     "task": () => taskDetail(d.bike, d.task),
     "new-task": () => taskForm(d.bike),
     "std-pick": () => stdPicker(d.bike),
+    "quick": () => quickToggle(d.key, el),
+    "back-bike": () => bikeDetail(ctxBike, true),
     "edit-task": () => taskForm(d.bike, d.task),
     "del-log": () => delLog(d.log),
     "day": () => { calSel = d.date; renderCal(); },
@@ -510,10 +527,34 @@ function taskCard(x) {
   return `<div class="card row">
     <div class="bar ${st.level}"></div>${bike.photo && state.bikes.length > 1 ? bikeThumb(bike, "sm") : ""}
     <div class="grow" data-act="task" data-bike="${bike.id}" data-task="${task.id}" style="cursor:pointer">${info}</div>
-    <button class="btn small" data-act="done" data-bike="${bike.id}" data-task="${task.id}">Erledigt</button>
+    ${quickBtn(key, st.level)}
   </div>`;
 }
+/* Schnell abhaken in der Offen-Liste */
+const justDone = new Map();   // "radId|aufgabeId" → Log-Eintrag, nur bis zum nächsten Aufruf der Seite
+function quickBtn(key, level) {
+  if (justDone.has(key)) return `<button class="btn small is-done" data-act="quick" data-key="${key}" aria-label="Rückgängig">✓ Erledigt</button>`;
+  return level === "ok" ? `<button class="btn small ghost" data-act="quick" data-key="${key}">Erledigt</button>`
+    : `<button class="btn small is-open" data-act="quick" data-key="${key}" aria-label="Als erledigt markieren">Offen</button>`;
+}
+function quickToggle(key, btn) {
+  const [bid, tid] = key.split("|");
+  const b = bikeById(bid), t = b && b.tasks.find((x) => x.id === tid); if (!t) return;
+  if (justDone.has(key)) {
+    removeLog(justDone.get(key)); justDone.delete(key);
+    btn.className = "btn small is-open"; btn.textContent = "Offen";
+    toast("Wieder offen");
+  } else {
+    justDone.set(key, markDone(b, t, t.name, todayISO(), b.km ?? null, null, "", null));
+    btn.className = "btn small is-done"; btn.textContent = "✓ Erledigt";
+    toast("Erledigt ✓ – nochmal tippen macht es rückgängig");
+  }
+  save();
+  const n = allTasks().filter((x) => x.st.level === "over").length;
+  const badge = document.getElementById("badge"); badge.hidden = !n; badge.textContent = n;
+}
 function renderDue() {
+  justDone.clear();   // erledigte Punkte verschwinden beim nächsten Aufruf
   if (filterBike !== "all" && !bikeById(filterBike)) filterBike = "all";
   const bikeItems = allTasks().filter((x) => filterBike === "all" || x.bike.id === filterBike);
   if (filterCat !== "all" && !bikeItems.some((x) => catOf(x.task) === filterCat)) filterCat = "all";
@@ -545,7 +586,7 @@ function renderDue() {
     <button class="link" data-act="sel-mode">${selMode ? "Abbrechen" : "☑︎ Mehrere abhaken"}</button></div>`;
   if (over.length) h += `<h2>Überfällig</h2>` + over.map(taskCard).join("");
   if (soon.length) h += `<h2>Bald fällig</h2>` + soon.map(taskCard).join("");
-  if (neu.length) h += `<h2>Noch kein Datum</h2><p class="hint" style="margin:-4px 4px 8px">Tippe auf „Erledigt", wenn du ungefähr weißt, wann es zuletzt gemacht wurde.</p>` + neu.map(taskCard).join("");
+  if (neu.length) h += `<h2>Noch kein Datum</h2><p class="hint" style="margin:-4px 4px 8px">Tippe auf <strong>„Offen“</strong>, um eine Aufgabe als heute erledigt abzuhaken. Für Datum, Kilometer oder Teilewechsel die Aufgabe selbst antippen.</p>` + neu.map(taskCard).join("");
   if (!open && items.length) h += `<div class="empty" style="padding:24px"><div class="big">✅</div><p>Gerade ist nichts fällig.</p></div>`;
   if (ok.length) h += showLater ? `<h2>Später fällig</h2>` + ok.map(taskCard).join("") + `<button class="link" data-act="later">Weniger anzeigen</button>`
     : `<button class="btn ghost block" data-act="later">Später fällige Aufgaben anzeigen (${ok.length})</button>`;
@@ -647,8 +688,9 @@ function renderBikes() {
       <span style="color:var(--muted);font-size:22px">›</span></div>`;
 }
 
-function bikeDetail(id) {
+function bikeDetail(id, restore = false) {
   const b = bikeById(id); if (!b) return;
+  if (ctxBike !== id) restore = false;
   const taskRow = (t) => {
     const st = status(b, t);
     return `<div class="list-item row"><div class="bar ${st.level}"></div>
@@ -660,7 +702,9 @@ function bikeDetail(id) {
   const tasks = byCat(b.tasks).map(([c, list]) => {
     const lv = list.map((t) => status(b, t).level);
     const o = lv.filter((l) => l === "over").length, so = lv.filter((l) => l === "soon").length;
-    return `<details class="cat" ${o || so ? "open" : ""}><summary>${CAT_ICON[c]} ${c} <span class="sub" style="font-weight:400">${list.length}</span>
+    const key = b.id + "|" + c;
+    const isOpen = key in catOpen ? catOpen[key] : !!(o || so);
+    return `<details class="cat" data-key="${esc(key)}" ${isOpen ? "open" : ""}><summary>${CAT_ICON[c]} ${c} <span class="sub" style="font-weight:400">${list.length}</span>
         ${o ? `<span class="pill over">${o} überfällig</span>` : so ? `<span class="pill soon">${so} bald</span>` : ""}</summary>
       <div class="items">${list.map(taskRow).join("")}</div></details>`;
   }).join("") || `<p class="sub">Noch keine Wartungsarbeiten.</p>`;
@@ -686,6 +730,8 @@ function bikeDetail(id) {
     ${partsOverview(b)}
     <h2>Verlauf${total ? " · " + total.toLocaleString("de-DE", { style: "currency", currency: "EUR" }) + " gesamt" : ""}</h2><div class="card">${hist}</div>
     <button class="btn ghost block" data-act="edit-bike" data-bike="${b.id}">Rad bearbeiten</button>`);
+  ctxBike = b.id; sheetIsBike = true;
+  if (restore) document.getElementById("sheet").scrollTop = bikeScroll;
 }
 
 /* Übersicht aller Verschleißteile eines Rads mit aktuellem Alter */
@@ -862,7 +908,7 @@ function stdPicker(bikeId, showAll = false, pre = []) {
     const picked = new FormData(f).getAll("std").map((i) => pool[i]);
     if (!picked.length) { toast("Nichts ausgewählt"); return; }
     picked.forEach((t) => b.tasks.push({ id: uid(), name: t.name, days: t.days, km: t.km, note: t.note || "", part: t.part || "", cat: catOf(t), lastDate: null, lastKm: null }));
-    save(); render(); bikeDetail(b.id);
+    save(); render(); bikeDetail(b.id, true);
     toast(picked.length + (picked.length === 1 ? " Aufgabe" : " Aufgaben") + " hinzugefügt");
   });
 }
@@ -957,7 +1003,7 @@ function bikeForm(id) {
     const kmVal = fd.get("km") === "" ? null : Math.max(0, Number(fd.get("km")));
     if (b) {
       Object.assign(b, { name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), photo });
-      save(); bikeDetail(b.id); render(); toast("Gespeichert");
+      save(); bikeDetail(b.id, true); render(); toast("Gespeichert");
     } else {
       const nb = { id: uid(), name: fd.get("name").trim(), type: fd.get("type"), km: kmVal, notes: fd.get("notes").trim(), photo, tasks: [], parts: {} };
       const tpls = templatesFor(nb.type);
@@ -987,7 +1033,9 @@ function taskDetail(bikeId, taskId) {
   const st = status(b, t);
   const label = { over: "Überfällig", soon: "Bald fällig", ok: "OK", new: "Noch nie eingetragen" }[st.level];
   const done = state.log.filter((l) => l.taskId === t.id).sort((a, c) => c.date.localeCompare(a.date)).slice(0, 5);
+  const back = ctxBike === b.id;
   openSheet(sheetHead(t.name) + `
+    ${back ? `<button class="link" data-act="back-bike" style="margin:-6px 0 4px">‹ Zurück zu ${esc(b.name)}</button>` : ""}
     <div class="sub">${esc(b.name)}${b.km != null ? " · Tacho " + km(b.km) : ""}</div>
     <div class="card" style="margin-top:12px">
       <div class="row"><div class="grow"><div class="sub">Intervall</div><div class="title" style="font-size:16px">${esc(intervalText(t))}</div></div>
@@ -1101,7 +1149,7 @@ function taskForm(bikeId, taskId) {
   });
   if (t) document.getElementById("del-task").addEventListener("click", () => {
     if (!confirm(`„${t.name}" aus dem Wartungsplan entfernen? Der Verlauf bleibt erhalten.`)) return;
-    b.tasks = b.tasks.filter((x) => x.id !== t.id); save(); bikeDetail(b.id); render();
+    b.tasks = b.tasks.filter((x) => x.id !== t.id); save(); bikeDetail(b.id, true); render();
   });
 }
 
@@ -1116,6 +1164,7 @@ function markDone(b, task, name, date, kmVal, cost, note, swap) {
   state.log.push(entry);
   if (task && (!task.lastDate || date >= task.lastDate)) { task.lastDate = date; task.lastKm = kmVal; }
   if (kmVal != null && (b.km == null || kmVal > b.km)) b.km = kmVal;
+  return entry.id;
 }
 
 function doneForm(bikeId, taskId) {
@@ -1152,7 +1201,9 @@ function doneForm(bikeId, taskId) {
     const task = t || b.tasks.find((x) => x.name.toLowerCase() === name.toLowerCase());
     const swap = fd.get("swap") ? { label: (fd.get("plabel") || "").trim() } : null;
     markDone(b, task, name, fd.get("date"), kmVal, fd.get("cost") ? Number(fd.get("cost")) : null, fd.get("note").trim(), swap);
-    save(); closeSheet(); render(); toast(swap ? t.part + " gewechselt ✓" : "Eingetragen ✓");
+    save(); render();
+    if (ctxBike === b.id) bikeDetail(b.id, true); else closeSheet();
+    toast(swap ? t.part + " gewechselt ✓" : "Eingetragen ✓");
   });
 }
 
@@ -1195,7 +1246,7 @@ function kmForm(bikeId) {
   const f = document.getElementById("f-km");
   f.addEventListener("submit", (e) => {
     e.preventDefault(); b.km = Math.max(0, Number(new FormData(f).get("km"))); save();
-    if (tab === "bikes") bikeDetail(b.id); else closeSheet();
+    if (ctxBike === b.id) bikeDetail(b.id, true); else closeSheet();
     render(); toast("Kilometerstand gespeichert");
   });
 }
@@ -1203,6 +1254,12 @@ function kmForm(bikeId) {
 function delLog(id) {
   const l = state.log.find((x) => x.id === id); if (!l) return;
   if (!confirm(`Eintrag „${l.taskName}" vom ${fmt(l.date)} löschen?`)) return;
+  const b = removeLog(id);
+  save(); if (b) bikeDetail(b.id, true); render();
+}
+/* Eintrag entfernen und Aufgabe/Teil auf den Stand davor zurücksetzen */
+function removeLog(id) {
+  const l = state.log.find((x) => x.id === id); if (!l) return null;
   state.log = state.log.filter((x) => x.id !== id);
   const b = bikeById(l.bikeId);
   // Teilewechsel rückgängig machen, wenn danach kein neuerer Wechsel kam
@@ -1221,7 +1278,7 @@ function delLog(id) {
     const prev = state.log.filter((x) => x.taskId === t.id).sort((a, c) => c.date.localeCompare(a.date))[0];
     t.lastDate = prev ? prev.date : null; t.lastKm = prev ? prev.km : null;
   }
-  save(); if (b) bikeDetail(b.id); render();
+  return b;
 }
 
 /* ---------- Ansicht: Sicherung (iCloud Drive) ---------- */
